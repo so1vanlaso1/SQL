@@ -1,0 +1,15 @@
+# ---- core (always needed) ----
+numpy>=1.24
+requests>=2.31
+sqlglot>=25.0.0
+
+# ---- real embedding model: ibm-granite/granite-embedding-311m-multilingual-r2 ----
+# Pulls in torch + transformers. Use Python 3.10-3.12 for reliable wheels.
+# If this can't install on your Python, the pipeline auto-falls back to a built-in
+# hashing embedder so you can still run everything end-to-end (lower retrieval quality).
+sentence-transformers>=3.0.0
+
+# ---- optional: run a local SQL LLM via HuggingFace transformers ----
+# (not needed for the RAG retrieval itself; uncomment to use --backend transformers)
+# transformers>=4.44
+# accelerate>=0.30

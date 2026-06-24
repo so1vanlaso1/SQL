@@ -1,0 +1,13 @@
+# env / deps
+.venv/
+.env
+
+# generated artifacts (rebuilt by `python -m schema_rag.cli setup`)
+data/
+
+# python caches
+__pycache__/
+*.pyc
+
+# model / HF caches if downloaded locally
+.cache/
