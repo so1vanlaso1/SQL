@@ -64,7 +64,7 @@ SQL_REPAIR_ATTEMPTS = int(os.environ.get("SQL_REPAIR_ATTEMPTS", "1"))
 # /models/load and /models/unload.
 PIPELINE_LLM_BACKEND = os.environ.get("PIPELINE_LLM_BACKEND", os.environ.get("SQL_LLM_BACKEND", "none")).lower()
 
-LLAMACPP_BASE_URL = os.environ.get("LLAMACPP_BASE_URL", "http://localhost:8080")
+LLAMACPP_BASE_URL = os.environ.get("LLAMACPP_BASE_URL", "http://localhost:8888")
 LLAMACPP_API_KEY = os.environ.get("LLAMACPP_API_KEY", "")
 GEMMA_PLANNER_MODEL = os.environ.get("GEMMA_PLANNER_MODEL", "gemma4-planner")
 QWEN_SQL_MODEL = os.environ.get("QWEN_SQL_MODEL", "qwen3.5-sql")

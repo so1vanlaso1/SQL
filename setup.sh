@@ -69,8 +69,11 @@ upsert_env() {
   fi
 }
 
+# Router port is configurable so it can dodge an occupied 8080 on remote hosts.
+LLAMA_PORT="${LLAMA_PORT:-8888}"
+
 upsert_env PIPELINE_LLM_BACKEND llamacpp
-upsert_env LLAMACPP_BASE_URL http://127.0.0.1:8080
+upsert_env LLAMACPP_BASE_URL "http://127.0.0.1:${LLAMA_PORT}"
 upsert_env GEMMA_PLANNER_MODEL gemma4-planner
 upsert_env QWEN_SQL_MODEL qwen3.5-sql
 upsert_env GEMMA_PLANNER_HF_ID unsloth/gemma-4-E4B-it-GGUF:UD-Q4_K_XL
@@ -283,8 +286,8 @@ PY
 start_llama_router() {
   local log_file="data/runtime_logs/llama-server.log"
   local pid_file="data/runtime_logs/llama-server.pid"
-  if wait_for_url "http://127.0.0.1:8080/v1/models" "llama.cpp router" 5 >/dev/null 2>&1; then
-    echo "llama.cpp router is already running at http://127.0.0.1:8080"
+  if wait_for_url "http://127.0.0.1:${LLAMA_PORT}/v1/models" "llama.cpp router" 5 >/dev/null 2>&1; then
+    echo "llama.cpp router is already running at http://127.0.0.1:${LLAMA_PORT}"
     return
   fi
   echo "Starting llama.cpp router ..."
@@ -293,11 +296,11 @@ start_llama_router() {
     --models-max 1 \
     --sleep-idle-seconds 300 \
     --host 127.0.0.1 \
-    --port 8080 \
+    --port "$LLAMA_PORT" \
     > "$log_file" 2>&1 &
   echo "$!" > "$pid_file"
   echo "llama.cpp router log: $log_file"
-  wait_for_url "http://127.0.0.1:8080/v1/models" "llama.cpp router" 300
+  wait_for_url "http://127.0.0.1:${LLAMA_PORT}/v1/models" "llama.cpp router" 300
 }
 
 start_chat_ui() {
