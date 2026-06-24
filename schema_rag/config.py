@@ -30,8 +30,10 @@ INDEX_DIR = Path(os.environ.get("INDEX_DIR", DATA_DIR / "schema_index"))
 SKILL_DIR = Path(os.environ.get("SKILL_DIR", DATA_DIR / "table_skills"))
 CATALOG_PATH = Path(os.environ.get("CATALOG_PATH", DATA_DIR / "schema_catalog.json"))
 LOG_DIR = Path(os.environ.get("LOG_DIR", DATA_DIR / "query_logs"))
+LLM_IO_LOG_DIR = Path(os.environ.get("LLM_IO_LOG_DIR", DATA_DIR / "llm_io_logs"))
 SKILL_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
+LLM_IO_LOG_DIR.mkdir(exist_ok=True)
 
 # ---- Embedding model --------------------------------------------------------
 # "auto"  -> try sentence-transformers with EMBED_MODEL, else fall back to hashing

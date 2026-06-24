@@ -58,6 +58,8 @@ data/schema_catalog.json       extracted live database schema/catalog
 data/table_skills/*.skill.md   one compact table card per table
 data/schema_index/*            local vector index
 data/query_logs/*.json         request traces
+data/llm_io_logs/*.json        prompts and raw model responses
+data/runtime_logs/*.log        llama.cpp and web server logs
 ```
 
 ## Setup
@@ -74,8 +76,11 @@ Git Bash / WSL / Linux / macOS:
 
 ```bash
 bash setup.sh
-python -m schema_rag.cli web
 ```
+
+`setup.sh` builds/downloads everything needed for the full pipeline, configures
+`PIPELINE_LLM_BACKEND=llamacpp`, starts llama.cpp router mode, starts the chat UI,
+and writes runtime plus per-request LLM I/O logs.
 
 Then open:
 

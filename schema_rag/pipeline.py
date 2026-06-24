@@ -24,6 +24,7 @@ class PipelineResult:
     planner_raw: str = ""
     plan_validation: Optional[PlanValidationResult] = None
     sql_prompt: str = ""
+    sql_raw: str = ""
     sql: Optional[str] = None
     backend: str = "none"
     gen_note: str = ""
@@ -33,6 +34,7 @@ class PipelineResult:
     run_error: str = ""
     answer: str = ""
     warnings: List[str] = field(default_factory=list)
+    llm_io: List[dict] = field(default_factory=list)
 
 
 def run_query(sql: str, db_path: Path | None = None, limit: int | None = None, timeout_seconds: int | None = None):
@@ -73,22 +75,36 @@ def _answer(question: str, columns: Optional[List[str]], rows: Optional[List[tup
 
 def _log_result(result: PipelineResult) -> None:
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    config.LLM_IO_LOG_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "request_id": result.request_id,
         "question": result.retrieval.question,
         "seed_tables": result.retrieval.seed_tables,
         "expanded_tables": result.retrieval.expanded_tables,
         "plan": result.plan,
+        "planner_prompt": result.planner_prompt,
+        "planner_raw": result.planner_raw,
         "plan_validation": result.plan_validation.__dict__ if result.plan_validation else None,
+        "sql_prompt": result.sql_prompt,
+        "sql_raw": result.sql_raw,
         "sql": result.sql,
         "sql_validation": result.validation.__dict__ if result.validation else None,
         "columns": result.columns,
         "rows": result.rows,
         "run_error": result.run_error,
         "warnings": result.warnings,
+        "llm_io": result.llm_io,
     }
     path = config.LOG_DIR / f"{result.request_id}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    llm_path = config.LLM_IO_LOG_DIR / f"{result.request_id}.json"
+    llm_payload = {
+        "request_id": result.request_id,
+        "question": result.retrieval.question,
+        "backend": result.backend,
+        "llm_io": result.llm_io,
+    }
+    llm_path.write_text(json.dumps(llm_payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
 
 def _validate_and_repair_plan(
@@ -113,6 +129,16 @@ def _validate_and_repair_plan(
         )
         if repaired.note:
             result.gen_note = (result.gen_note + " | " + repaired.note).strip(" |")
+        result.llm_io.append(
+            {
+                "stage": "planner_repair",
+                "backend": repaired.backend,
+                "model": repaired.model,
+                "prompt": repaired.prompt,
+                "raw_response": repaired.raw,
+                "note": repaired.note,
+            }
+        )
         if not repaired.plan:
             break
         result.plan = repaired.plan
@@ -137,10 +163,22 @@ def _validate_and_repair_sql(result: PipelineResult, backend: str) -> None:
         )
         if repaired.note:
             result.gen_note = (result.gen_note + " | " + repaired.note).strip(" |")
+        result.llm_io.append(
+            {
+                "stage": "sql_repair",
+                "backend": repaired.backend,
+                "model": repaired.model,
+                "prompt": repaired.prompt,
+                "raw_response": repaired.raw,
+                "sql": repaired.sql,
+                "note": repaired.note,
+            }
+        )
         if not repaired.sql:
             break
         result.sql = repaired.sql
         result.sql_prompt = repaired.prompt
+        result.sql_raw = repaired.raw or result.sql_raw
         result.validation = validator.validate(result.sql)
 
 
@@ -167,6 +205,17 @@ def ask(
     result.planner_prompt = plan_result.prompt
     result.planner_raw = plan_result.raw or ""
     result.plan = plan_result.plan
+    result.llm_io.append(
+        {
+            "stage": "planner",
+            "backend": plan_result.backend,
+            "model": plan_result.model,
+            "prompt": plan_result.prompt,
+            "raw_response": plan_result.raw,
+            "plan": plan_result.plan,
+            "note": plan_result.note,
+        }
+    )
     if plan_result.note:
         result.gen_note = plan_result.note
 
@@ -181,6 +230,18 @@ def ask(
         )
         result.sql_prompt = sql_result.prompt
         result.sql = sql_result.sql
+        result.sql_raw = sql_result.raw or ""
+        result.llm_io.append(
+            {
+                "stage": "sql_generation",
+                "backend": sql_result.backend,
+                "model": sql_result.model,
+                "prompt": sql_result.prompt,
+                "raw_response": sql_result.raw,
+                "sql": sql_result.sql,
+                "note": sql_result.note,
+            }
+        )
         if sql_result.note:
             result.gen_note = (result.gen_note + " | " + sql_result.note).strip(" |")
         _validate_and_repair_sql(result, backend)
