@@ -98,7 +98,7 @@ PY
 echo "== Starting llama.cpp router on 127.0.0.1:${LLAMA_PORT} =="
 nohup "$LLAMA_SERVER_BIN" \
   --models-preset ./models/models.ini \
-  --models-max 1 \
+  --models-max 2 \
   --sleep-idle-seconds 300 \
   --host 127.0.0.1 \
   --port "$LLAMA_PORT" \

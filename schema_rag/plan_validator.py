@@ -57,7 +57,7 @@ def _metric_name_formula(metric: dict) -> tuple[str | None, str]:
     name = metric.get("name") or metric.get("alias")
     formula = str(metric.get("formula") or "").strip()
     if not formula:
-        field_ref = str(metric.get("field") or "").strip()
+        field_ref = str(metric.get("field") or metric.get("column") or metric.get("col") or "").strip()
         aggregation = str(metric.get("aggregation") or metric.get("agg") or "").strip()
         if field_ref and aggregation:
             formula = f"{aggregation}({field_ref})"
@@ -83,6 +83,12 @@ def _join_columns(join: dict) -> tuple[str | None, str | None]:
     right = str(join.get("right") or "").strip()
     if "." in left and "." in right:
         return left, right
+    # shape: split table/column keys, e.g. left_table + left_column.
+    lt, lc = join.get("left_table"), join.get("left_column")
+    rt, rc = join.get("right_table"), join.get("right_column")
+    if lt and lc and rt and rc:
+        return f"{lt}.{lc}", f"{rt}.{rc}"
+    # shape: bare table names in left/right + equality carried in an on-condition.
     on = join.get("on") or join.get("on_condition") or join.get("condition")
     refs = _column_refs(on)
     if len(refs) >= 2:
@@ -122,12 +128,29 @@ def validate_plan(plan: dict, allowed_tables: list[str], catalog: dict | None = 
             errors.append(f"Required table {table} was not selected by retrieval/join expansion")
 
     allowed_joins = schema_catalog.join_pairs(catalog)
+    # table-pair -> (left_col, right_col), so a join given as bare table names can be
+    # resolved to its real FK columns (the json_schema planner emits table names).
+    join_by_tables: dict[tuple[str, str], tuple[str, str]] = {}
+    for j in catalog.get("joins", []):
+        lt = str(j["left"]).split(".", 1)[0]
+        rt = str(j["right"]).split(".", 1)[0]
+        join_by_tables.setdefault((lt, rt), (j["left"], j["right"]))
+        join_by_tables.setdefault((rt, lt), (j["right"], j["left"]))
+
     for idx, join in enumerate(plan.get("join_plan") or []):
         lcol, rcol = _join_columns(join)
         if not lcol or not rcol:
+            # Fall back to resolving bare table names (left="a", right="b") via the
+            # catalog's foreign keys.
+            lt = str(join.get("left") or join.get("left_table") or "").strip()
+            rt = str(join.get("right") or join.get("right_table") or "").strip()
+            resolved = join_by_tables.get((lt, rt))
+            if resolved:
+                lcol, rcol = resolved
+        if not lcol or not rcol:
             errors.append(
-                f"join_plan[{idx}] must give a qualified column pair "
-                f"(table.col in left/right, or an on_condition like 'a.x = b.y')"
+                f"join_plan[{idx}] must name a real join "
+                f"(table.col in left/right, two related tables, or an on_condition like 'a.x = b.y')"
             )
             continue
         _validate_refs(catalog, [lcol, rcol], errors, f"join_plan[{idx}]")

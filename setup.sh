@@ -110,7 +110,9 @@ upsert_env QWEN_SQL_MODEL qwen3.5-sql
 upsert_env GEMMA_PLANNER_HF_ID unsloth/gemma-4-E4B-it-GGUF:UD-Q4_K_XL
 upsert_env QWEN_SQL_HF_ID unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL
 upsert_env LLAMA_MANUAL_LOAD 1
-upsert_env LLAMA_MANUAL_UNLOAD 1
+# Keep models resident: with --models-max 2 both the planner and SQL model fit in
+# 16 GB, so DON'T unload between stages/requests (avoids ~3s reload each call).
+upsert_env LLAMA_MANUAL_UNLOAD 0
 
 wait_for_url() {
   local url="$1"
@@ -339,7 +341,7 @@ start_llama_router() {
   echo "Starting llama.cpp router ..."
   nohup "$LLAMA_SERVER_BIN" \
     --models-preset ./models/models.ini \
-    --models-max 1 \
+    --models-max 2 \
     --sleep-idle-seconds 300 \
     --host 127.0.0.1 \
     --port "$LLAMA_PORT" \

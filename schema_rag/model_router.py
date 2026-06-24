@@ -47,6 +47,11 @@ class ModelRouter:
             json={"model": model},
             timeout=600,
         )
+        # With --models-max >= 2 and manual unload disabled, models stay resident, so a
+        # subsequent load returns 400 "model is already running". That is exactly the
+        # state we want - treat it as success instead of failing the whole request.
+        if resp.status_code == 400 and "already running" in resp.text.lower():
+            return "already running"
         resp.raise_for_status()
         return "loaded"
 

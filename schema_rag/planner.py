@@ -47,6 +47,86 @@ Return:
 }}"""
 
 
+# JSON schema the planner output is constrained to (llama.cpp / OpenAI json_schema
+# response_format). This forces ONE stable structure so downstream code never has to
+# guess between key variants (left vs left_table, field vs column, name/formula vs
+# field/aggregation). Values still need semantic validation in plan_validator, but the
+# *shape* is now fixed. Metrics use field+aggregation (a qualified column + an enum)
+# rather than a free-form formula, because the model writes qualified columns reliably
+# but tends to invent aliases inside hand-written formulas.
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intent": {"type": "string"},
+        "required_tables": {"type": "array", "items": {"type": "string"}},
+        "join_plan": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "left": {"type": "string"},
+                    "right": {"type": "string"},
+                    "join_type": {"type": "string"},
+                },
+                "required": ["left", "right"],
+            },
+        },
+        "filters": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "column": {"type": "string"},
+                    "op": {"type": "string"},
+                    "value": {"type": "string"},
+                },
+                "required": ["column"],
+            },
+        },
+        "metrics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "field": {"type": "string"},
+                    "aggregation": {
+                        "type": "string",
+                        "enum": ["SUM", "COUNT", "AVG", "MIN", "MAX", "COUNT_DISTINCT"],
+                    },
+                    "alias": {"type": "string"},
+                },
+                "required": ["field", "aggregation"],
+            },
+        },
+        "group_by": {"type": "array", "items": {"type": "string"}},
+        "order_by": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "field": {"type": "string"},
+                    "direction": {"type": "string", "enum": ["ASC", "DESC"]},
+                },
+                "required": ["field"],
+            },
+        },
+        "limit": {"type": ["integer", "null"]},
+        "missing_information": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["intent", "required_tables", "join_plan", "metrics"],
+}
+
+
+def _plan_response_format(backend: str) -> Optional[dict]:
+    """Constrain the planner output to PLAN_SCHEMA on backends that support it."""
+    if backend in {"llamacpp", "openai"}:
+        return {
+            "type": "json_schema",
+            "json_schema": {"name": "sql_plan", "schema": PLAN_SCHEMA},
+        }
+    return None
+
+
 @dataclass
 class PlannerResult:
     backend: str
@@ -103,7 +183,7 @@ def create_plan(
     raw = ""
     try:
         router.load(model)
-        response_format = {"type": "json_object"} if backend in {"llamacpp", "openai"} else None
+        response_format = _plan_response_format(backend)
         chat = router.chat(
             model=model,
             system=PLANNER_SYSTEM,
@@ -149,7 +229,7 @@ def repair_plan(
     raw = ""
     try:
         router.load(config.GEMMA_PLANNER_MODEL)
-        response_format = {"type": "json_object"} if backend in {"llamacpp", "openai"} else None
+        response_format = _plan_response_format(backend)
         chat = router.chat(
             model=config.GEMMA_PLANNER_MODEL,
             system=PLANNER_SYSTEM,
