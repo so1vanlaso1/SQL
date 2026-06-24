@@ -82,7 +82,14 @@ def write_sql(
     raw = ""
     try:
         router.load(model)
-        chat = router.chat(model=model, system=SQL_SYSTEM, user=prompt, max_tokens=700, temperature=0)
+        chat = router.chat(
+            model=model,
+            system=SQL_SYSTEM,
+            user=prompt,
+            max_tokens=700,
+            temperature=0,
+            chat_template_kwargs={"enable_thinking": False},
+        )
         raw = chat.content
         return SqlWriterResult(backend, model, prompt, _extract_sql(raw), raw=raw)
     except Exception as exc:  # noqa: BLE001
@@ -118,7 +125,14 @@ def repair_sql(
     raw = ""
     try:
         router.load(model)
-        chat = router.chat(model=model, system=SQL_SYSTEM, user=prompt, max_tokens=700, temperature=0)
+        chat = router.chat(
+            model=model,
+            system=SQL_SYSTEM,
+            user=prompt,
+            max_tokens=700,
+            temperature=0,
+            chat_template_kwargs={"enable_thinking": False},
+        )
         raw = chat.content
         return SqlWriterResult(backend, model, prompt, _extract_sql(raw), raw=raw)
     except Exception as exc:  # noqa: BLE001

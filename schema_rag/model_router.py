@@ -70,6 +70,7 @@ class ModelRouter:
         max_tokens: int = 800,
         temperature: float = 0,
         response_format: Optional[dict] = None,
+        chat_template_kwargs: Optional[dict] = None,
     ) -> ChatResult:
         if self.backend == "ollama":
             prompt = f"{system}\n\n{user}"
@@ -90,6 +91,11 @@ class ModelRouter:
         }
         if response_format:
             payload["response_format"] = response_format
+        # e.g. {"enable_thinking": False} to stop a reasoning model (Qwen3.x) from
+        # spending its whole token budget inside a <think> block and returning empty
+        # content. llama.cpp passes these straight into the chat template.
+        if chat_template_kwargs:
+            payload["chat_template_kwargs"] = chat_template_kwargs
         resp = requests.post(
             f"{self._base_url()}/v1/chat/completions",
             headers=self._headers(),

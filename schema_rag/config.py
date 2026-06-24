@@ -41,6 +41,8 @@ LLM_IO_LOG_DIR.mkdir(exist_ok=True)
 # "hashing" -> deterministic dependency-free fallback (lower quality, but always runs)
 EMBEDDER = os.environ.get("EMBEDDER", "auto").lower()
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "ibm-granite/granite-embedding-311m-multilingual-r2")
+# "auto" -> cuda if torch sees a usable GPU, else cpu. Force with "cuda" / "cpu".
+EMBED_DEVICE = os.environ.get("EMBED_DEVICE", "auto").lower()
 
 # ---- Retrieval knobs --------------------------------------------------------
 TOP_K_CHUNKS = int(os.environ.get("TOP_K_CHUNKS", "15"))   # raw chunk hits to pull

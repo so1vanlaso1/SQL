@@ -46,6 +46,50 @@ def _column_refs(value: Any) -> list[str]:
     return refs
 
 
+def _metric_name_formula(metric: dict) -> tuple[str | None, str]:
+    """Normalize a metric entry to (name, formula).
+
+    Accepts both the validator-native shape ``{"name", "formula"}`` and the shape an
+    LLM planner naturally emits, ``{"field", "aggregation", "alias"}``. In the latter
+    case the formula is synthesized as ``AGG(field)`` so a plan that is semantically
+    correct is not rejected over a key-name mismatch.
+    """
+    name = metric.get("name") or metric.get("alias")
+    formula = str(metric.get("formula") or "").strip()
+    if not formula:
+        field_ref = str(metric.get("field") or "").strip()
+        aggregation = str(metric.get("aggregation") or metric.get("agg") or "").strip()
+        if field_ref and aggregation:
+            formula = f"{aggregation}({field_ref})"
+        elif field_ref:
+            formula = field_ref
+    return name, formula
+
+
+def _filter_column(filt: dict) -> str | None:
+    """A filter's target column under any of the common key names."""
+    return filt.get("column") or filt.get("field") or filt.get("col")
+
+
+def _join_columns(join: dict) -> tuple[str | None, str | None]:
+    """Resolve a join entry to its (left, right) qualified column refs.
+
+    Accepts either qualified columns directly in ``left``/``right``
+    (e.g. ``"a.x"`` / ``"b.y"``), or the shape an LLM planner commonly emits:
+    bare table names in ``left``/``right`` with the column equality carried in an
+    ``on`` / ``on_condition`` / ``condition`` string (e.g. ``"a.x = b.y"``).
+    """
+    left = str(join.get("left") or "").strip()
+    right = str(join.get("right") or "").strip()
+    if "." in left and "." in right:
+        return left, right
+    on = join.get("on") or join.get("on_condition") or join.get("condition")
+    refs = _column_refs(on)
+    if len(refs) >= 2:
+        return refs[0], refs[1]
+    return None, None
+
+
 def _validate_refs(catalog: dict, refs: Iterable[str], errors: list[str], label: str) -> None:
     for ref in refs:
         if not _column_exists(catalog, ref):
@@ -79,17 +123,21 @@ def validate_plan(plan: dict, allowed_tables: list[str], catalog: dict | None = 
 
     allowed_joins = schema_catalog.join_pairs(catalog)
     for idx, join in enumerate(plan.get("join_plan") or []):
-        left = join.get("left")
-        right = join.get("right")
-        if not left or not right:
-            errors.append(f"join_plan[{idx}] must include left and right")
+        lcol, rcol = _join_columns(join)
+        if not lcol or not rcol:
+            errors.append(
+                f"join_plan[{idx}] must give a qualified column pair "
+                f"(table.col in left/right, or an on_condition like 'a.x = b.y')"
+            )
             continue
-        _validate_refs(catalog, [left, right], errors, f"join_plan[{idx}]")
-        if (left, right) not in allowed_joins:
-            errors.append(f"join_plan[{idx}] uses non-allowed join: {left} = {right}")
+        _validate_refs(catalog, [lcol, rcol], errors, f"join_plan[{idx}]")
+        # join_pairs() already contains both directions, but check the reverse too
+        # so a planner that orders the equality either way still validates.
+        if (lcol, rcol) not in allowed_joins and (rcol, lcol) not in allowed_joins:
+            errors.append(f"join_plan[{idx}] uses non-allowed join: {lcol} = {rcol}")
 
     for idx, filt in enumerate(plan.get("filters") or []):
-        column = filt.get("column")
+        column = _filter_column(filt)
         if not column:
             errors.append(f"filters[{idx}] missing column")
         else:
@@ -97,12 +145,11 @@ def validate_plan(plan: dict, allowed_tables: list[str], catalog: dict | None = 
 
     metric_names = set()
     for idx, metric in enumerate(plan.get("metrics") or []):
-        name = metric.get("name")
-        formula = str(metric.get("formula") or "")
+        name, formula = _metric_name_formula(metric)
         if name:
             metric_names.add(name)
         if not formula:
-            errors.append(f"metrics[{idx}] missing formula")
+            errors.append(f"metrics[{idx}] missing formula (or field/aggregation)")
             continue
         if _DANGEROUS_RE.search(formula) or ";" in formula or "--" in formula or "/*" in formula:
             errors.append(f"metrics[{idx}] contains unsafe SQL tokens")

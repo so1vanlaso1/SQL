@@ -8,6 +8,13 @@ huggingface_hub>=0.23.0
 # Pulls in torch + transformers. Use Python 3.10-3.12 for reliable wheels.
 # If this can't install on your Python, the pipeline auto-falls back to a built-in
 # hashing embedder so you can still run everything end-to-end (lower retrieval quality).
+#
+# NOTE ON GPU: do NOT let pip pull the default `torch` here on a GPU box -- the
+# default PyPI wheel is a CUDA 13.0 build that needs a 580+ driver, so on common
+# vast.ai Blackwell boxes (570.x driver / CUDA 12.8) it falls back to CPU.
+# setup.sh installs a cu128 torch BEFORE this file for exactly that reason; if you
+# install deps manually on a GPU host, do the same first:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
 sentence-transformers>=3.0.0
 
 # ---- optional: run a local SQL LLM via HuggingFace transformers ----

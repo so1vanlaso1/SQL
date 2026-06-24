@@ -35,11 +35,41 @@ class SentenceTransformerEmbedder:
         from sentence_transformers import SentenceTransformer  # lazy import
 
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name)
+        device = self._resolve_device(config.EMBED_DEVICE)
+        self.device = device
+        self.model = SentenceTransformer(model_name, device=device)
+        # Make the actual placement loud: a silent CPU fallback on a GPU box is the
+        # exact failure mode where a driver/torch CUDA mismatch wastes the GPU.
+        print(f"[embedder] device = {device}")
         if hasattr(self.model, "get_embedding_dimension"):
             self.dim = int(self.model.get_embedding_dimension())
         else:
             self.dim = int(self.model.get_sentence_embedding_dimension())
+
+    @staticmethod
+    def _resolve_device(pref: str) -> str:
+        import torch
+
+        usable = torch.cuda.is_available()
+        if pref == "cpu":
+            return "cpu"
+        if pref == "cuda":
+            if not usable:
+                print(
+                    "[embedder] EMBED_DEVICE=cuda but torch.cuda.is_available() is False; "
+                    "using CPU. Check that torch's CUDA build matches your driver "
+                    "(see setup.sh / requirements.txt notes on the cu128 wheel)."
+                )
+                return "cpu"
+            return "cuda"
+        # auto
+        if not usable:
+            print(
+                "[embedder] no usable CUDA device (torch.cuda.is_available() is False); "
+                "running the embedder on CPU. If this box has a GPU, the torch CUDA build "
+                "likely does not match the driver -- reinstall the cu128 wheel."
+            )
+        return "cuda" if usable else "cpu"
 
     def encode(self, texts: List[str]) -> np.ndarray:
         vecs = self.model.encode(

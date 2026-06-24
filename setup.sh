@@ -49,6 +49,37 @@ fi
 
 # --- deps ---
 "$VENV_PY" -m pip install --upgrade pip
+
+# --- GPU-matched torch (install BEFORE requirements) -------------------------
+# The default PyPI `torch` wheel now ships a CUDA 13.0 (cu130) build, which needs
+# a 580+ driver. Vast.ai Blackwell boxes (e.g. RTX 5060 Ti, sm_120) commonly run
+# a 570.x driver that only supports CUDA 12.8 -> torch reports the driver as "too
+# old", torch.cuda.is_available() returns False, and the Granite embedder silently
+# falls back to CPU. Installing a cu128 torch first pins a wheel that matches the
+# driver AND has sm_120 kernels; the later `pip install -r requirements.txt`
+# (sentence-transformers) then keeps this torch instead of pulling cu130.
+# Override the channel with TORCH_INDEX_URL, or skip entirely with SKIP_TORCH_INSTALL=1.
+if [ "${SKIP_TORCH_INSTALL:-0}" != "1" ] && command -v nvidia-smi >/dev/null 2>&1; then
+  TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
+  # Only (re)install when torch is missing or can't actually use the GPU. This avoids
+  # re-downloading a multi-GB wheel on a healthy box, while still REPAIRING an existing
+  # mismatched install (e.g. a cu130 wheel that a cu128 driver reports as "too old") --
+  # a bare `pip install torch` would treat that broken wheel as already satisfied.
+  if "$VENV_PY" - <<'PY'
+import importlib.util, sys
+if importlib.util.find_spec("torch") is None:
+    sys.exit(1)  # not installed -> needs install
+import torch
+sys.exit(0 if torch.cuda.is_available() else 1)  # unusable CUDA -> needs reinstall
+PY
+  then
+    echo "torch already present and CUDA is usable; skipping torch install."
+  else
+    echo "Installing GPU-matched torch from ${TORCH_INDEX_URL} ..."
+    "$VENV_PY" -m pip install --force-reinstall torch --index-url "$TORCH_INDEX_URL"
+  fi
+fi
+
 "$VENV_PY" -m pip install -r requirements.txt
 
 # --- .env ---
@@ -269,7 +300,22 @@ for alias, hf_id in [(gemma_alias, gemma_hf), (qwen_alias, qwen_hf)]:
     )
     entries.append((alias, f"./models/{filename}"))
 
-preset = ["version = 1", "", "[*]", "ctx-size = 8192", "threads = -1", ""]
+# [*] applies to every model the router loads (gemma planner + qwen sql).
+#  - n-gpu-layers = 999 offloads ALL transformer layers to the GPU (0 = CPU-only).
+#    The router loads one model at a time (--models-max 1), so a single 9B Q4 + KV
+#    cache fits comfortably in the RTX 5060 Ti's 16 GB.
+#  - ctx-size = 32768 because the web UI packs skill cards + row samples into prompts
+#    that reached ~12k tokens; the old 8192 made the server reject the request with
+#    "exceeds the available context size".
+preset = [
+    "version = 1",
+    "",
+    "[*]",
+    "ctx-size = 32768",
+    "n-gpu-layers = 999",
+    "threads = -1",
+    "",
+]
 for alias, model_path in entries:
     preset.extend([f"[{alias}]", f"model = {model_path}", "temp = 0", ""])
 
