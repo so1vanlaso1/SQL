@@ -108,7 +108,7 @@ def create_plan(
             model=model,
             system=PLANNER_SYSTEM,
             user=prompt,
-            max_tokens=900,
+            max_tokens=2048,
             temperature=0,
             response_format=response_format,
         )
@@ -154,7 +154,7 @@ def repair_plan(
             model=config.GEMMA_PLANNER_MODEL,
             system=PLANNER_SYSTEM,
             user=repair,
-            max_tokens=900,
+            max_tokens=2048,
             temperature=0,
             response_format=response_format,
         )
