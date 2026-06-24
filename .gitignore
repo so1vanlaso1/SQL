@@ -4,6 +4,7 @@
 
 # generated artifacts (rebuilt by `python -m schema_rag.cli setup`)
 data/
+models/
 
 # python caches
 __pycache__/

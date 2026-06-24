@@ -106,9 +106,16 @@ python -m schema_rag.cli ask "Which distributors have customers with falling ord
 Run with llama.cpp router mode and two GGUF models:
 
 ```bash
-llama-server --models-dir ./models --models-max 1 --sleep-idle-seconds 300
+llama-server --models-preset ./models/models.ini --models-max 1 --sleep-idle-seconds 300
 # set PIPELINE_LLM_BACKEND=llamacpp in .env
 python -m schema_rag.cli ask "Which customer type generated the highest sales in HCM in 2025?" --backend llamacpp
+```
+
+`setup.sh` downloads and registers:
+
+```text
+planner: unsloth/gemma-4-E4B-it-GGUF:UD-Q4_K_XL -> gemma4-planner
+sql:     unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL   -> qwen3.5-sql
 ```
 
 Start chat UI:
@@ -136,8 +143,10 @@ ROW_SAMPLE_LIMIT=10
 SKILL_SAMPLE_LIMIT=3
 PIPELINE_LLM_BACKEND=none
 LLAMACPP_BASE_URL=http://localhost:8080
-GEMMA_PLANNER_MODEL=unsloth/gemma-4-E4B-it-GGUF:UD_Q4_K_XL
-QWEN_SQL_MODEL=qwen-sql
+GEMMA_PLANNER_MODEL=gemma4-planner
+QWEN_SQL_MODEL=qwen3.5-sql
+GEMMA_PLANNER_HF_ID=unsloth/gemma-4-E4B-it-GGUF:UD-Q4_K_XL
+QWEN_SQL_HF_ID=unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL
 ```
 
 `EMBEDDER=auto` tries the real Granite embedding model and falls back to a deterministic

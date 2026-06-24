@@ -2,6 +2,7 @@
 numpy>=1.24
 requests>=2.31
 sqlglot>=25.0.0
+huggingface_hub>=0.23.0
 
 # ---- real embedding model: ibm-granite/granite-embedding-311m-multilingual-r2 ----
 # Pulls in torch + transformers. Use Python 3.10-3.12 for reliable wheels.

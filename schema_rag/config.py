@@ -64,8 +64,10 @@ PIPELINE_LLM_BACKEND = os.environ.get("PIPELINE_LLM_BACKEND", os.environ.get("SQ
 
 LLAMACPP_BASE_URL = os.environ.get("LLAMACPP_BASE_URL", "http://localhost:8080")
 LLAMACPP_API_KEY = os.environ.get("LLAMACPP_API_KEY", "")
-GEMMA_PLANNER_MODEL = os.environ.get("GEMMA_PLANNER_MODEL", "unsloth/gemma-4-E4B-it-GGUF:UD_Q4_K_XL")
-QWEN_SQL_MODEL = os.environ.get("QWEN_SQL_MODEL", "qwen-sql")
+GEMMA_PLANNER_MODEL = os.environ.get("GEMMA_PLANNER_MODEL", "gemma4-planner")
+QWEN_SQL_MODEL = os.environ.get("QWEN_SQL_MODEL", "qwen3.5-sql")
+GEMMA_PLANNER_HF_ID = os.environ.get("GEMMA_PLANNER_HF_ID", "unsloth/gemma-4-E4B-it-GGUF:UD-Q4_K_XL")
+QWEN_SQL_HF_ID = os.environ.get("QWEN_SQL_HF_ID", "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL")
 LLAMA_MANUAL_LOAD = os.environ.get("LLAMA_MANUAL_LOAD", "1").lower() not in {"0", "false", "no"}
 LLAMA_MANUAL_UNLOAD = os.environ.get("LLAMA_MANUAL_UNLOAD", "1").lower() not in {"0", "false", "no"}
 
