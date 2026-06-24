@@ -185,8 +185,15 @@ def validate_plan(plan: dict, allowed_tables: list[str], catalog: dict | None = 
 
     for idx, item in enumerate(plan.get("order_by") or []):
         field = item.get("field") if isinstance(item, dict) else item
-        if field and field not in metric_names and "." in str(field):
-            _validate_refs(catalog, [str(field)], errors, f"order_by[{idx}]")
+        field_str = str(field).strip() if field else ""
+        # order_by may reference a metric alias (bare word like "total_qty"), a qualified
+        # column, or an aggregate expression such as "COUNT(a.b)". Validate only the
+        # qualified column refs we can extract from it; a bare alias is fine because the
+        # SQL validator + EXPLAIN are the authoritative gate on the final query.
+        if field_str and field_str not in metric_names:
+            refs = _column_refs(field_str)
+            if refs:
+                _validate_refs(catalog, refs, errors, f"order_by[{idx}]")
         direction = str(item.get("direction", "ASC")).upper() if isinstance(item, dict) else "ASC"
         if direction not in {"ASC", "DESC"}:
             errors.append(f"order_by[{idx}] direction must be ASC or DESC")
