@@ -14,18 +14,36 @@ PLANNER_SYSTEM = """You are a database planning model.
 
 Your job is to create a SQL plan.
 Do not write SQL.
+The original user question is authoritative for intent.
+Selected tables are retrieval context only; do not reinterpret the task from
+table names alone.
 Use only the provided tables, columns, and allowed joins.
 Do not invent tables.
 Do not invent columns.
 Do not invent joins.
+If resolved entity matches are provided, include them as exact filters on the
+provided table.column. If a match has multiple values, preserve all values.
+If the user asks for revenue, sales, "doanh thu", or "doanh số", plan a money
+aggregation such as SUM over a revenue/amount field. Do not turn that request
+into merely listing distinct dimension values unless the user explicitly asks
+to list names.
+If one selected table already contains both the needed metric and dimension,
+prefer that single table over joining separate tables.
+For simple listing questions without metrics, set a safe limit.
 Return valid JSON only."""
 
 
-PLAN_TEMPLATE = """User question:
+PLAN_TEMPLATE = """Original user question:
 {user_question}
+
+Use the original user question above as the source of truth for intent.
+The schema below is only the selected table context available for planning.
 
 Conversation context:
 {history_context}
+
+Resolved entity matches:
+{entity_context}
 
 Selected table descriptions:
 {skill_md_context}
@@ -81,7 +99,8 @@ PLAN_SCHEMA = {
                 "properties": {
                     "column": {"type": "string"},
                     "op": {"type": "string"},
-                    "value": {"type": "string"},
+                    "value": {"type": ["string", "number", "null"]},
+                    "values": {"type": "array", "items": {"type": ["string", "number"]}},
                 },
                 "required": ["column"],
             },
@@ -147,10 +166,12 @@ def build_planner_prompt(
     schema_context: str,
     allowed_join_graph: list[dict],
     history_context: str = "",
+    entity_context: str = "",
 ) -> str:
     return PLAN_TEMPLATE.format(
         user_question=user_question,
         history_context=history_context or "(không có lịch sử liên quan)",
+        entity_context=entity_context or "(none)",
         skill_md_context=skill_md_context,
         schema_context=schema_context,
         allowed_join_graph=json.dumps(allowed_join_graph, ensure_ascii=False, indent=2),
@@ -179,10 +200,18 @@ def create_plan(
     allowed_join_graph: list[dict],
     backend: str | None = None,
     history_context: str = "",
+    entity_context: str = "",
 ) -> PlannerResult:
     backend = (backend or config.PIPELINE_LLM_BACKEND).lower()
     model = config.GEMMA_PLANNER_MODEL
-    prompt = build_planner_prompt(user_question, skill_md_context, schema_context, allowed_join_graph, history_context)
+    prompt = build_planner_prompt(
+        user_question,
+        skill_md_context,
+        schema_context,
+        allowed_join_graph,
+        history_context,
+        entity_context,
+    )
     if backend == "none":
         return PlannerResult(backend, model, prompt, None, note="PIPELINE_LLM_BACKEND=none - planner prompt built, no model called.")
 
@@ -220,8 +249,16 @@ def repair_plan(
     allowed_join_graph: list[dict],
     backend: str | None = None,
     history_context: str = "",
+    entity_context: str = "",
 ) -> PlannerResult:
-    prompt = build_planner_prompt(user_question, skill_md_context, schema_context, allowed_join_graph, history_context)
+    prompt = build_planner_prompt(
+        user_question,
+        skill_md_context,
+        schema_context,
+        allowed_join_graph,
+        history_context,
+        entity_context,
+    )
     repair = (
         "Your previous plan was invalid.\n\n"
         f"Previous plan:\n{json.dumps(previous_plan, ensure_ascii=False, indent=2)}\n\n"

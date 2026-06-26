@@ -31,6 +31,7 @@ SKILL_DIR = Path(os.environ.get("SKILL_DIR", DATA_DIR / "table_skills"))
 CATALOG_PATH = Path(os.environ.get("CATALOG_PATH", DATA_DIR / "schema_catalog.json"))
 LOG_DIR = Path(os.environ.get("LOG_DIR", DATA_DIR / "query_logs"))
 LLM_IO_LOG_DIR = Path(os.environ.get("LLM_IO_LOG_DIR", DATA_DIR / "llm_io_logs"))
+LLM_IO_TEXT_LOG_PATH = Path(os.environ.get("LLM_IO_TEXT_LOG_PATH", LLM_IO_LOG_DIR / "llm_calls.txt"))
 SKILL_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
 LLM_IO_LOG_DIR.mkdir(exist_ok=True)
@@ -85,6 +86,22 @@ QWEN_SQL_MODEL = os.environ.get("QWEN_SQL_MODEL", "qwen-sql")
 GEMMA_SKILL_MODEL = os.environ.get("GEMMA_SKILL_MODEL", GEMMA_PLANNER_MODEL)
 ALLOW_TEMPLATE_SKILL_FALLBACK = os.environ.get("ALLOW_TEMPLATE_SKILL_FALLBACK", "0").lower() in {"1", "true", "yes"}
 CHAT_HISTORY_TURNS = int(os.environ.get("CHAT_HISTORY_TURNS", "6"))
+
+# ---- Follow-up routing + fuzzy entity resolution ---------------------------
+CHAT_RESULT_MEMORY_ROWS = int(os.environ.get("CHAT_RESULT_MEMORY_ROWS", "500"))
+FUZZY_MIN_SCORE = float(os.environ.get("FUZZY_MIN_SCORE", "0.72"))
+FUZZY_MAX_MATCHES = int(os.environ.get("FUZZY_MAX_MATCHES", "10"))
+FUZZY_EXCLUDED_COLUMNS = {
+    item.strip()
+    for item in os.environ.get("FUZZY_EXCLUDED_COLUMNS", "").split(",")
+    if item.strip()
+}
+
+NEO4J_ENABLED = os.environ.get("NEO4J_ENABLED", "0").lower() in {"1", "true", "yes"}
+NEO4J_URI = os.environ.get("NEO4J_URI", "")
+NEO4J_USER = os.environ.get("NEO4J_USER", "")
+NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
+NEO4J_DATABASE = os.environ.get("NEO4J_DATABASE", "neo4j")
 
 # Legacy llama.cpp router settings. They are no longer used by setup.sh/setup.ps1.
 LLAMACPP_BASE_URL = os.environ.get("LLAMACPP_BASE_URL", "http://localhost:8888")

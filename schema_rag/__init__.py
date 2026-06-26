@@ -2,7 +2,8 @@
 
 Pipeline:
     question
-      -> embed question            (embedder.py  - ibm-granite/granite-embedding-311m-multilingual-r2)
+      -> Gemma rewrites for embedding using only table/column names (query_rewriter.py)
+      -> embed rewritten query     (embedder.py  - ibm-granite/granite-embedding-311m-multilingual-r2)
       -> vector search schema      (vectorstore.py)
       -> top-k candidate tables    (retriever.py)
       -> expand via FK graph       (fk_graph.py)   <- joins come from REAL db relationships, not vectors

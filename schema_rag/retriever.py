@@ -25,6 +25,7 @@ from .vectorstore import Hit, VectorStore
 @dataclass
 class RetrievalResult:
     question: str
+    embedding_query: str                         # text actually embedded for vector retrieval
     seed_tables: List[str]                       # chosen purely by vector similarity
     table_scores: Dict[str, float]               # table -> aggregated similarity
     expanded_tables: List[str]                    # seeds + FK bridges
@@ -141,6 +142,7 @@ def _allowed_joins(catalog: dict, tables: List[str]) -> List[dict]:
 def retrieve(
     question: str,
     history_context: str = "",
+    embedding_query: str | None = None,
     selected_tables: list[str] | None = None,
     top_k_chunks: int | None = None,
     max_seed_tables: int | None = None,
@@ -154,6 +156,7 @@ def retrieve(
 
     catalog = schema_catalog.load_catalog()
     if selected_tables is not None:
+        retrieval_text = embedding_query or question
         expanded_tables = [
             t
             for t in dict.fromkeys(selected_tables)
@@ -170,8 +173,8 @@ def retrieve(
         store = store or _load_store()
         embedder = get_embedder()
 
-        retrieval_text = question
-        if history_context:
+        retrieval_text = embedding_query or question
+        if history_context and embedding_query is None:
             retrieval_text = f"Lịch sử hội thoại liên quan:\n{history_context}\n\nCâu hỏi hiện tại:\n{question}"
         qvec = embedder.encode([retrieval_text])[0]
         hits = store.search(qvec, k=top_k_chunks)
@@ -198,6 +201,7 @@ def retrieve(
 
     return RetrievalResult(
         question=question,
+        embedding_query=retrieval_text,
         seed_tables=seed_tables,
         table_scores=table_scores,
         expanded_tables=expanded_tables,

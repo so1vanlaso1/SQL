@@ -12,11 +12,15 @@ import requests
 from . import config
 
 
+_TEXT_LOGGED_CALL_IDS: set[str] = set()
+
+
 @dataclass
 class ChatResult:
     backend: str
     model: str
     content: str
+    tool_calls: list[dict] | None = None
     raw: dict | None = None
     request_url: str = ""
     request_payload: dict | None = None
@@ -52,6 +56,90 @@ def _write_call_log(call: dict) -> None:
     config.LLM_IO_LOG_DIR.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(call, fh, ensure_ascii=False, indent=2, default=str)
+    if call.get("raw_response") is not None or call.get("error"):
+        _append_text_call_log(call)
+
+
+def _json_text(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+    except TypeError:
+        return str(value)
+
+
+def _extract_response_preview(raw_response: Any) -> str:
+    if not isinstance(raw_response, dict):
+        return "" if raw_response is None else str(raw_response)
+    if "response" in raw_response:
+        return str(raw_response.get("response") or "")
+    choices = raw_response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = choice.get("message")
+    if isinstance(message, str):
+        return message
+    if isinstance(message, dict):
+        content = _message_content(message)
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            tool_text = _json_text(tool_calls)
+            return f"{content}\n\nTool calls:\n{tool_text}".strip()
+        return content
+    return str(choice.get("text", "") or "")
+
+
+def _append_text_call_log(call: dict) -> None:
+    call_id = str(call.get("call_id") or "")
+    if call_id and call_id in _TEXT_LOGGED_CALL_IDS:
+        return
+    if call_id:
+        _TEXT_LOGGED_CALL_IDS.add(call_id)
+
+    payload = call.get("request_payload") if isinstance(call.get("request_payload"), dict) else {}
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    status = "ERROR" if call.get("error") else "OK"
+    lines = [
+        "=" * 96,
+        f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Call ID: {call_id or '(unknown)'}",
+        f"Status: {status}",
+        f"HTTP Status: {call.get('response_status')}",
+        f"URL: {call.get('request_url')}",
+        f"Model: {payload.get('model') if isinstance(payload, dict) else ''}",
+        f"JSON log: {call.get('immediate_log_path')}",
+        "",
+    ]
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "message").upper()
+            lines.extend([f"{role}:", str(message.get("content") or ""), ""])
+    elif isinstance(payload, dict) and "prompt" in payload:
+        lines.extend(["PROMPT:", str(payload.get("prompt") or ""), ""])
+
+    if isinstance(payload, dict):
+        extra_payload = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"messages", "prompt"}
+        }
+        if extra_payload:
+            lines.extend(["REQUEST SETTINGS:", _json_text(extra_payload), ""])
+
+    if call.get("error"):
+        lines.extend(["ERROR:", str(call.get("error")), ""])
+    else:
+        response_preview = _extract_response_preview(call.get("raw_response"))
+        if response_preview:
+            lines.extend(["RESPONSE:", response_preview, ""])
+        lines.extend(["RAW RESPONSE JSON:", _json_text(call.get("raw_response")), ""])
+
+    text_path = config.LLM_IO_TEXT_LOG_PATH
+    text_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(text_path, "a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines).rstrip() + "\n\n")
 
 
 class ModelRouter:
@@ -143,6 +231,8 @@ class ModelRouter:
         temperature: float = 0,
         response_format: Optional[dict] = None,
         chat_template_kwargs: Optional[dict] = None,
+        tools: Optional[list[dict]] = None,
+        tool_choice: Optional[dict | str] = None,
     ) -> ChatResult:
         if self.backend == "ollama":
             prompt = f"{system}\n\n{user}"
@@ -170,7 +260,7 @@ class ModelRouter:
                 data = resp.json()
                 self.last_call["raw_response"] = data
                 _write_call_log(self.last_call)
-                return ChatResult(self.backend, model, data.get("response", ""), data, url, payload, resp.status_code)
+                return ChatResult(self.backend, model, data.get("response", ""), None, data, url, payload, resp.status_code)
             except Exception as exc:
                 self.last_call["error"] = f"{exc.__class__.__name__}: {exc}"
                 _write_call_log(self.last_call)
@@ -184,6 +274,10 @@ class ModelRouter:
         }
         if response_format:
             payload["response_format"] = response_format
+        if tools:
+            payload["tools"] = tools
+        if tool_choice:
+            payload["tool_choice"] = tool_choice
         # e.g. {"enable_thinking": False} to stop a reasoning model (Qwen3.x) from
         # spending its whole token budget inside a <think> block and returning empty
         # content. llama.cpp and many OpenAI-compatible servers accept/ignore this.
@@ -214,12 +308,20 @@ class ModelRouter:
             data = resp.json()
             self.last_call["raw_response"] = data
             choice = (data.get("choices") or [{}])[0]
+            tool_calls = None
             if "message" in choice:
-                content = _message_content(choice.get("message"))
+                message = choice.get("message") or {}
+                content = _message_content(message)
+                if isinstance(message, dict):
+                    raw_tool_calls = message.get("tool_calls")
+                    if isinstance(raw_tool_calls, list):
+                        tool_calls = raw_tool_calls
+                    elif isinstance(message.get("function_call"), dict):
+                        tool_calls = [{"function": message["function_call"]}]
             else:
                 content = str(choice.get("text", "") or "")
             _write_call_log(self.last_call)
-            return ChatResult(self.backend, model, content, data, url, payload, resp.status_code)
+            return ChatResult(self.backend, model, content, tool_calls, data, url, payload, resp.status_code)
         except Exception as exc:
             self.last_call["error"] = f"{exc.__class__.__name__}: {exc}"
             _write_call_log(self.last_call)

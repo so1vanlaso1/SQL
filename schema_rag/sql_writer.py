@@ -19,22 +19,36 @@ Use only the provided schema.
 Use only the validated plan.
 Do not invent columns.
 Use explicit JOIN syntax.
-Use table aliases."""
+Use table aliases.
+Use SELECT or WITH only.
+For raw/listing queries without aggregation, include LIMIT 100 or lower.
+For revenue/sales questions, aggregate a money field with SUM.
+If the plan contains several tables but no join_plan, do not cross join them.
+Use one table if it answers the question, or use UNION only for a true list of
+values across multiple independent tables.
+If resolved entity matches are provided, apply them exactly as WHERE filters.
+For multiple matched values in the same field, use IN (...)."""
 
 
 SQL_TEMPLATE = """SQL dialect:
 {dialect}
 
-User question:
+Original user question:
 {user_question}
+
+Use the original user question above as the source of truth. The validated plan
+is a structured guide, not permission to change the user's intent.
 
 Schema:
 {schema_context}
 
+Resolved entity matches:
+{entity_context}
+
 Validated plan:
 {validated_plan_json}
 
-Return SQL only."""
+Return one validator-safe SQL query only."""
 
 
 @dataclass
@@ -58,11 +72,17 @@ def _extract_sql(text: str) -> str:
     return text.strip()
 
 
-def build_sql_prompt(user_question: str, schema_context: str, validated_plan: dict) -> str:
+def build_sql_prompt(
+    user_question: str,
+    schema_context: str,
+    validated_plan: dict,
+    entity_context: str = "",
+) -> str:
     return SQL_TEMPLATE.format(
         dialect=config.SQL_DIALECT,
         user_question=user_question,
         schema_context=schema_context,
+        entity_context=entity_context or "(none)",
         validated_plan_json=json.dumps(validated_plan, ensure_ascii=False, indent=2),
     )
 
@@ -72,10 +92,11 @@ def write_sql(
     schema_context: str,
     validated_plan: dict,
     backend: str | None = None,
+    entity_context: str = "",
 ) -> SqlWriterResult:
     backend = (backend or config.PIPELINE_LLM_BACKEND).lower()
     model = config.QWEN_SQL_MODEL
-    prompt = build_sql_prompt(user_question, schema_context, validated_plan)
+    prompt = build_sql_prompt(user_question, schema_context, validated_plan, entity_context)
     if backend == "none":
         return SqlWriterResult(backend, model, prompt, None, note="PIPELINE_LLM_BACKEND=none - SQL prompt built, no model called.")
 
@@ -109,6 +130,7 @@ def repair_sql(
     schema_context: str,
     validated_plan: dict,
     backend: str | None = None,
+    entity_context: str = "",
 ) -> SqlWriterResult:
     prompt = (
         "The SQL failed validation.\n\n"
@@ -116,7 +138,7 @@ def repair_sql(
         "Errors:\n"
         + "\n".join(f"- {err}" for err in errors)
         + "\n\nRepair the SQL. Return SQL only.\n\n"
-        + build_sql_prompt(user_question, schema_context, validated_plan)
+        + build_sql_prompt(user_question, schema_context, validated_plan, entity_context)
     )
     backend = (backend or config.PIPELINE_LLM_BACKEND).lower()
     model = config.QWEN_SQL_MODEL

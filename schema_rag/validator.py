@@ -72,10 +72,9 @@ def _parse_with_sqlglot(sql: str, res: ValidationResult) -> None:
         res.errors.append("Only one SQL statement is allowed.")
         return
     root = parsed[0]
-    if not isinstance(root, (exp.Select, exp.With)):
-        res.errors.append("Only SELECT/WITH queries are allowed.")
-    select = root if isinstance(root, exp.Select) else root.find(exp.Select)
-    if select is not None:
+    if not isinstance(root, (exp.Select, exp.With, exp.Union)):
+        res.errors.append("Only SELECT/WITH/UNION read queries are allowed.")
+    for select in root.find_all(exp.Select):
         has_top_level_star = any(isinstance(expr, exp.Star) for expr in select.expressions)
         if has_top_level_star and not root.args.get("limit"):
             res.errors.append("SELECT * without LIMIT is not allowed.")

@@ -39,6 +39,11 @@ def init(db_path: Path | None = None) -> None:
                 request_id TEXT,
                 selected_tables_json TEXT,
                 sql TEXT,
+                result_columns_json TEXT,
+                result_rows_json TEXT,
+                plan_json TEXT,
+                trace_json TEXT,
+                entity_matches_json TEXT,
                 row_count INTEGER,
                 status TEXT,
                 created_at TEXT NOT NULL,
@@ -47,6 +52,20 @@ def init(db_path: Path | None = None) -> None:
             """
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_sys_chat_messages_session ON sys_chat_messages(session_id, message_id)")
+        existing = {
+            row["name"]
+            for row in con.execute("PRAGMA table_info(sys_chat_messages)").fetchall()
+        }
+        migrations = {
+            "result_columns_json": "TEXT",
+            "result_rows_json": "TEXT",
+            "plan_json": "TEXT",
+            "trace_json": "TEXT",
+            "entity_matches_json": "TEXT",
+        }
+        for column, decl in migrations.items():
+            if column not in existing:
+                con.execute(f"ALTER TABLE sys_chat_messages ADD COLUMN {column} {decl}")
 
 
 def _now() -> str:
@@ -129,6 +148,11 @@ def add_assistant_message(
     request_id: str = "",
     selected_tables: list[str] | None = None,
     sql: str | None = None,
+    result_columns: list[str] | None = None,
+    result_rows: list | None = None,
+    plan: dict | None = None,
+    trace: list[dict] | None = None,
+    entity_matches: list[dict] | None = None,
     row_count: int | None = None,
     status: str = "ok",
 ) -> None:
@@ -138,9 +162,11 @@ def add_assistant_message(
         con.execute(
             """
             INSERT INTO sys_chat_messages(
-                session_id, role, content, request_id, selected_tables_json, sql, row_count, status, created_at
+                session_id, role, content, request_id, selected_tables_json, sql,
+                result_columns_json, result_rows_json, plan_json, trace_json,
+                entity_matches_json, row_count, status, created_at
             )
-            VALUES (?, 'assistant', ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, 'assistant', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -148,6 +174,11 @@ def add_assistant_message(
                 request_id,
                 json.dumps(selected_tables or [], ensure_ascii=False),
                 sql,
+                json.dumps(result_columns or [], ensure_ascii=False),
+                json.dumps(result_rows or [], ensure_ascii=False, default=str),
+                json.dumps(plan or {}, ensure_ascii=False, default=str),
+                json.dumps(trace or [], ensure_ascii=False, default=str),
+                json.dumps(entity_matches or [], ensure_ascii=False, default=str),
                 row_count,
                 status,
                 now,
@@ -161,7 +192,9 @@ def messages(session_id: str, limit: int = 100) -> list[dict[str, Any]]:
     with _connect() as con:
         rows = con.execute(
             """
-            SELECT message_id, role, content, request_id, selected_tables_json, sql, row_count, status, created_at
+            SELECT message_id, role, content, request_id, selected_tables_json, sql,
+                   result_columns_json, result_rows_json, plan_json, trace_json,
+                   entity_matches_json, row_count, status, created_at
             FROM sys_chat_messages
             WHERE session_id = ?
             ORDER BY message_id ASC
@@ -176,8 +209,26 @@ def messages(session_id: str, limit: int = 100) -> list[dict[str, Any]]:
             item["selected_tables"] = json.loads(item.pop("selected_tables_json") or "[]")
         except json.JSONDecodeError:
             item["selected_tables"] = []
+        for raw_key, out_key, fallback in [
+            ("result_columns_json", "result_columns", []),
+            ("result_rows_json", "result_rows", []),
+            ("plan_json", "plan", {}),
+            ("trace_json", "trace", []),
+            ("entity_matches_json", "entity_matches", []),
+        ]:
+            try:
+                item[out_key] = json.loads(item.pop(raw_key) or json.dumps(fallback))
+            except json.JSONDecodeError:
+                item[out_key] = fallback
         out.append(item)
     return out
+
+
+def last_assistant(session_id: str | None) -> dict[str, Any] | None:
+    if not session_id:
+        return None
+    rows = [row for row in messages(session_id, limit=100) if row.get("role") == "assistant"]
+    return rows[-1] if rows else None
 
 
 def compact_history(session_id: str | None, turns: int | None = None) -> str:

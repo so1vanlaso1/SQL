@@ -39,7 +39,8 @@ delivery orders, and returns.
 
 ```text
 user question
--> embed question with ibm-granite/granite-embedding-311m-multilingual-r2
+-> Gemma rewrites an embedding query using only table names + column names
+-> embed rewritten query with ibm-granite/granite-embedding-311m-multilingual-r2
 -> vector search table skill cards, column chunks, and capped row samples
 -> aggregate hits into seed tables
 -> expand selected tables through the FK graph
@@ -59,6 +60,7 @@ data/table_skills/*.skill.md   one compact table card per table
 data/schema_index/*            local vector index
 data/query_logs/*.json         request traces
 data/llm_io_logs/*.json        prompts and raw model responses
+data/llm_io_logs/llm_calls.txt readable append-only LLM call log
 data/runtime_logs/*.log        web server logs
 ```
 

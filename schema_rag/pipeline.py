@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-from . import config, plan_validator, planner, retriever, sql_writer, validator
+from . import config, entity_resolver, plan_validator, planner, query_rewriter, retriever, sql_writer, validator
 from .plan_validator import PlanValidationResult
 from .retriever import RetrievalResult
 from .validator import ValidationResult
@@ -33,6 +33,9 @@ class PipelineResult:
     columns: Optional[List[str]] = None
     run_error: str = ""
     answer: str = ""
+    decision: Optional[dict] = None
+    entity_matches: List[dict] = field(default_factory=list)
+    trace: List[dict] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     llm_io: List[dict] = field(default_factory=list)
 
@@ -73,15 +76,67 @@ def _answer(question: str, columns: Optional[List[str]], rows: Optional[List[tup
     return f"Trả về {len(rows)} dòng cho '{question}'."
 
 
+def _answer_rows(question: str, columns: Optional[List[str]], rows: Optional[List[tuple]], error: str) -> str:
+    if error:
+        return f"Toi khong the chay truy van: {error}"
+    if not rows:
+        return "Truy van khong tra ve dong nao."
+    if len(rows) == 1 and columns:
+        values = ", ".join(f"{col}={val}" for col, val in zip(columns, rows[0]))
+        return f"Ket qua cho '{question}': {values}"
+    if columns and len(rows) <= 5:
+        snippets = []
+        for row in rows:
+            snippets.append(", ".join(f"{col}={val}" for col, val in zip(columns, row)))
+        return f"Ket qua cho '{question}': " + "; ".join(snippets)
+    return f"Tra ve {len(rows)} dong cho '{question}'."
+
+
+def _trace(result: PipelineResult, stage: str, detail: str) -> None:
+    result.trace.append({"stage": stage, "detail": detail})
+
+
+def _entity_context(matches: list[dict] | None) -> str:
+    return entity_resolver.entity_context_text(matches)
+
+
+def _apply_entity_filters_to_plan(plan: dict | None, matches: list[dict]) -> None:
+    if not plan or not matches:
+        return
+    filters = list(plan.get("filters") or [])
+    seen = set()
+    for item in filters:
+        if not isinstance(item, dict):
+            continue
+        vals = item.get("values")
+        if vals is None and item.get("value") is not None:
+            vals = [item.get("value")]
+        seen.add((str(item.get("column") or item.get("field") or ""), tuple(str(v) for v in vals or [])))
+    for match in matches:
+        qcol = str(match.get("qualified_column") or "")
+        values = [str(v) for v in match.get("values") or []]
+        if not qcol or not values:
+            continue
+        key = (qcol, tuple(values))
+        if key in seen:
+            continue
+        filters.append({"column": qcol, "op": "IN" if len(values) > 1 else "=", "values": values})
+    plan["filters"] = filters
+
+
 def _log_result(result: PipelineResult) -> None:
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     config.LLM_IO_LOG_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "request_id": result.request_id,
         "question": result.retrieval.question,
+        "embedding_query": result.retrieval.embedding_query,
         "seed_tables": result.retrieval.seed_tables,
         "expanded_tables": result.retrieval.expanded_tables,
         "plan": result.plan,
+        "decision": result.decision,
+        "entity_matches": result.entity_matches,
+        "trace": result.trace,
         "planner_prompt": result.planner_prompt,
         "planner_raw": result.planner_raw,
         "plan_validation": result.plan_validation.__dict__ if result.plan_validation else None,
@@ -101,6 +156,7 @@ def _log_result(result: PipelineResult) -> None:
     llm_payload = {
         "request_id": result.request_id,
         "question": result.retrieval.question,
+        "embedding_query": result.retrieval.embedding_query,
         "backend": result.backend,
         "llm_io": result.llm_io,
     }
@@ -111,6 +167,7 @@ def _validate_and_repair_plan(
     result: PipelineResult,
     backend: str,
     history_context: str = "",
+    entity_context: str = "",
 ) -> None:
     if result.plan is None:
         return
@@ -128,6 +185,7 @@ def _validate_and_repair_plan(
             allowed_join_graph=result.retrieval.allowed_join_graph,
             backend=backend,
             history_context=history_context,
+            entity_context=entity_context,
         )
         if repaired.note:
             result.gen_note = (result.gen_note + " | " + repaired.note).strip(" |")
@@ -163,6 +221,7 @@ def _validate_and_repair_sql(result: PipelineResult, backend: str) -> None:
             schema_context=result.retrieval.schema_context,
             validated_plan=result.plan,
             backend=backend,
+            entity_context=_entity_context(result.entity_matches),
         )
         if repaired.note:
             result.gen_note = (result.gen_note + " | " + repaired.note).strip(" |")
@@ -193,13 +252,60 @@ def ask(
     gold_sql: Optional[str] = None,
     selected_tables: Optional[List[str]] = None,
     history_context: str = "",
+    entity_matches: Optional[List[dict]] = None,
+    decision: Optional[dict] = None,
+    trace: Optional[List[dict]] = None,
 ) -> PipelineResult:
     """Run the full RAG-assisted text-to-SQL pipeline for one question."""
     request_id = f"req_{uuid.uuid4().hex[:12]}"
-    r = retriever.retrieve(question, history_context=history_context, selected_tables=selected_tables)
-    result = PipelineResult(retrieval=r, request_id=request_id)
     backend = (backend or config.PIPELINE_LLM_BACKEND).lower()
+    rewrite_result = None
+    rewrite_target_tables: list[str] = []
+    if selected_tables is None:
+        rewrite_result = query_rewriter.rewrite_for_embedding(question, backend=backend, joined_only=True)
+        rewrite_target_tables = rewrite_result.target_tables
+    r = retriever.retrieve(
+        question,
+        history_context=history_context,
+        embedding_query=rewrite_result.embedding_query if rewrite_result else None,
+        selected_tables=selected_tables or rewrite_target_tables or None,
+    )
+    result = PipelineResult(retrieval=r, request_id=request_id)
     result.backend = backend
+    result.decision = decision
+    result.trace = list(trace or [])
+    _trace(result, "table_retrieval", "Selected candidate tables for the query.")
+    if rewrite_result:
+        result.llm_io.append(
+            {
+                "stage": "embedding_query_rewrite",
+                "backend": rewrite_result.backend,
+                "model": rewrite_result.model,
+                "prompt": rewrite_result.prompt,
+                "llm_call": rewrite_result.llm_call,
+                "raw_response": rewrite_result.raw,
+                "tool_args": rewrite_result.tool_args,
+                "embedding_query": rewrite_result.embedding_query,
+                "target_tables": rewrite_result.target_tables,
+                "note": rewrite_result.note,
+            }
+        )
+        if rewrite_result.note:
+            result.gen_note = rewrite_result.note
+
+    if entity_matches is None:
+        entity_matches = entity_resolver.resolve_entities(
+            question,
+            candidate_tables=r.expanded_tables,
+            preferred_columns=[],
+            joined_only=True,
+        )
+    result.entity_matches = entity_matches or []
+    if result.entity_matches:
+        _trace(result, "fuzzy_entities", "Resolved fuzzy values from real database values.")
+    else:
+        _trace(result, "fuzzy_entities", "No fuzzy values needed normalization.")
+    entity_context = _entity_context(result.entity_matches)
 
     plan_result = planner.create_plan(
         user_question=question,
@@ -208,6 +314,7 @@ def ask(
         allowed_join_graph=r.allowed_join_graph,
         backend=backend,
         history_context=history_context,
+        entity_context=entity_context,
     )
     result.planner_prompt = plan_result.prompt
     result.planner_raw = plan_result.raw or ""
@@ -225,9 +332,11 @@ def ask(
         }
     )
     if plan_result.note:
-        result.gen_note = plan_result.note
+        result.gen_note = (result.gen_note + " | " + plan_result.note).strip(" |")
 
-    _validate_and_repair_plan(result, backend, history_context)
+    _apply_entity_filters_to_plan(result.plan, result.entity_matches)
+    _validate_and_repair_plan(result, backend, history_context, entity_context)
+    _trace(result, "planning", "Created and validated the SQL plan.")
 
     if result.plan and result.plan_validation and result.plan_validation.valid:
         sql_result = sql_writer.write_sql(
@@ -235,6 +344,7 @@ def ask(
             schema_context=r.schema_context,
             validated_plan=result.plan,
             backend=backend,
+            entity_context=entity_context,
         )
         result.sql_prompt = sql_result.prompt
         result.sql = sql_result.sql
@@ -254,6 +364,7 @@ def ask(
         if sql_result.note:
             result.gen_note = (result.gen_note + " | " + sql_result.note).strip(" |")
         _validate_and_repair_sql(result, backend)
+        _trace(result, "sql_generation", "Generated and validated SQL.")
 
     sql_to_use = result.sql or gold_sql
     if not result.sql and gold_sql:
@@ -272,7 +383,8 @@ def ask(
     if sql_to_use and execute and result.validation and result.validation.ok:
         cols, rows, err = run_query(sql_to_use)
         result.columns, result.rows, result.run_error = cols, rows, err
-        result.answer = _answer(question, cols, rows, sql_to_use, err)
+        result.answer = _answer_rows(question, cols, rows, err)
+        _trace(result, "execution", f"Executed query and received {len(rows or [])} rows.")
     elif result.validation and not result.validation.ok:
         result.run_error = "SQL không vượt qua kiểm tra an toàn; truy vấn chưa được chạy."
         result.answer = result.run_error

@@ -12,7 +12,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from . import build_db, chat_memory, config, index_schema, webapp
+from . import build_db, chat_memory, config, entity_resolver, index_schema, webapp
 from .pipeline import PipelineResult, ask
 
 
@@ -21,6 +21,9 @@ def _print_retrieval(res: PipelineResult, show_chunks: bool = False) -> None:
     print("\n" + "=" * 78)
     print(f"QUESTION: {r.question}")
     print("=" * 78)
+    if r.embedding_query != r.question:
+        print("\n[0] Gemma embedding rewrite:")
+        print(f"      {r.embedding_query}")
 
     print("\n[1] Vector retrieval -> candidate (seed) tables:")
     for t in r.seed_tables:
@@ -39,7 +42,8 @@ def _print_retrieval(res: PipelineResult, show_chunks: bool = False) -> None:
     print("\n[3] Join paths from real FK relationships:")
     if r.join_edges:
         for e in r.join_edges:
-            print(f"      {e['on']}")
+            join_text = e.get("on") or f"{e.get('left')} = {e.get('right')}"
+            print(f"      {join_text}")
     else:
         print("      (none needed)")
 
@@ -214,6 +218,11 @@ def cmd_web(args) -> None:
     webapp.serve(host=args.host, port=args.port)
 
 
+def cmd_entity_index(args) -> None:
+    result = entity_resolver.build_neo4j_index(joined_only=not args.all_tables)
+    print(result)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -236,6 +245,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     sp.add_argument("--host", default="127.0.0.1", help="host to bind")
     sp.add_argument("--port", default=8000, type=int, help="port to bind")
     sp.set_defaults(func=cmd_web)
+
+    sp = sub.add_parser("entity-index", help="build the optional Neo4j fuzzy entity index")
+    sp.add_argument("--all-tables", action="store_true", help="index all tables instead of only joined chat tables")
+    sp.set_defaults(func=cmd_entity_index)
 
     for name in ("ask", "demo"):
         sp = sub.add_parser(name, help="run the pipeline")

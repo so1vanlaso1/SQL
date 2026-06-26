@@ -19,3 +19,5 @@ sentence-transformers>=3.0.0
 
 # The Gemma planner and Qwen SQL writer are called through remote chat-completions APIs.
 # No local Gemma/Qwen model packages are installed by setup.
+rapidfuzz>=3.9.0
+neo4j>=5.20.0
