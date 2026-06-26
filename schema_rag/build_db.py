@@ -6,7 +6,7 @@ import random
 import sqlite3
 from pathlib import Path
 
-from . import config, schema_def
+from . import config, joined_tables, schema_def
 
 SEED = 42
 START = dt.date(2024, 1, 1)
@@ -405,6 +405,8 @@ def build(db_path: Path | None = None) -> dict:
     try:
         _create_schema(con)
         counts = populate(con)
+        joined_counts = joined_tables.refresh(con)
+        counts.update(joined_counts)
     finally:
         con.close()
     total = sum(counts.values())

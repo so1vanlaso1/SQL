@@ -11,7 +11,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List
 
-from . import config, schema_def
+from . import config, joined_tables, schema_def
 
 
 def _quote_ident(name: str) -> str:
@@ -19,6 +19,21 @@ def _quote_ident(name: str) -> str:
 
 
 def _schema_meta(table: str) -> dict:
+    if table in joined_tables.BY_NAME:
+        jt = joined_tables.BY_NAME[table]
+        return {
+            "name": table,
+            "description": jt.purpose,
+            "aliases": [
+                table,
+                table.replace("_", " "),
+                "bang da join",
+                "joined table",
+                "feature table",
+            ],
+            "columns": [],
+            "foreign_keys": [],
+        }
     try:
         return schema_def.get_table(table)
     except KeyError:
@@ -144,6 +159,33 @@ def extract_catalog(
                     "join_type": "many_to_one",
                 }
             )
+    common_join_keys = {
+        "don_hang_id",
+        "khach_hang_id",
+        "nha_phan_phoi_id",
+        "nhan_vien_id",
+        "tuyen_id",
+        "san_pham_id",
+        "danh_muc_id",
+        "vung_id",
+        "ngay",
+        "thang",
+        "ngay_dat_hang",
+        "thang_dat_hang",
+    }
+    jt_names = [name for name in tables if name.startswith("jt_")]
+    for i, left_name in enumerate(jt_names):
+        left_cols = set(tables[left_name]["columns"])
+        for right_name in jt_names[i + 1 :]:
+            shared = sorted((left_cols & set(tables[right_name]["columns"])) & common_join_keys)
+            for col in shared:
+                joins.append(
+                    {
+                        "left": f"{left_name}.{col}",
+                        "right": f"{right_name}.{col}",
+                        "join_type": "feature_key",
+                    }
+                )
 
     return {"dialect": "sqlite", "database": str(db_path), "tables": tables, "joins": joins}
 

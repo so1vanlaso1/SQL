@@ -67,16 +67,39 @@ def _description_comments(table: dict) -> str:
     return "\n".join(lines)
 
 
+def _ddl_from_catalog(table_name: str, meta: dict) -> str:
+    lines = [f"CREATE TABLE {table_name} ("]
+    col_lines = []
+    for name, col in meta.get("columns", {}).items():
+        decl = f"    {name} {col.get('data_type') or 'TEXT'}"
+        if col.get("primary_key"):
+            decl += " PRIMARY KEY"
+        col_lines.append(decl)
+    lines.append(",\n".join(col_lines))
+    lines.append(");")
+    return "\n".join(lines)
+
+
 def build_schema_pack(tables: List[str], join_edges: List[dict]) -> str:
+    catalog = schema_catalog.load_catalog()
     blocks = ["-- Relevant tables (schema subset) --"]
     for t in tables:
-        blocks.append(_description_comments(schema_def.get_table(t)))
-        blocks.append(schema_def.ddl_for(t))
+        if t in catalog.get("tables", {}):
+            meta = catalog["tables"][t]
+            blocks.append(f"-- Bảng {t}: {_one_line(meta.get('description', ''))}")
+            for col_name, col in meta.get("columns", {}).items():
+                desc = _one_line(col.get("description", ""))
+                if desc:
+                    blocks.append(f"-- Trường {t}.{col_name}: {desc}")
+            blocks.append(_ddl_from_catalog(t, meta))
+        else:
+            blocks.append(_description_comments(schema_def.get_table(t)))
+            blocks.append(schema_def.ddl_for(t))
     blocks.append("")
     blocks.append("-- Join paths (use these exact relationships for JOINs) --")
     if join_edges:
         for e in join_edges:
-            blocks.append(f"{e['on']}")
+            blocks.append(str(e.get("on") or f"{e['left']} = {e['right']}"))
     else:
         blocks.append("(no foreign-key joins needed between the selected tables)")
     return "\n".join(blocks)
@@ -117,30 +140,57 @@ def _allowed_joins(catalog: dict, tables: List[str]) -> List[dict]:
 
 def retrieve(
     question: str,
+    history_context: str = "",
+    selected_tables: list[str] | None = None,
     top_k_chunks: int | None = None,
     max_seed_tables: int | None = None,
     max_expand_tables: int | None = None,
     store: VectorStore | None = None,
+    joined_only: bool = True,
 ) -> RetrievalResult:
     top_k_chunks = top_k_chunks or config.TOP_K_CHUNKS
     max_seed_tables = max_seed_tables or config.MAX_SEED_TABLES
     max_expand_tables = max_expand_tables or config.MAX_EXPAND_TABLES
 
-    store = store or _load_store()
-    embedder = get_embedder()
-
-    qvec = embedder.encode([question])[0]
-    hits = store.search(qvec, k=top_k_chunks)
-
-    table_scores = _aggregate_to_tables(hits)
-    seed_tables = sorted(table_scores, key=lambda t: table_scores[t], reverse=True)[:max_seed_tables]
-
-    expansion = fk_graph.expand(seed_tables, max_tables=max_expand_tables)
-    expanded_tables: List[str] = expansion["tables"]          # type: ignore[assignment]
-    join_edges: List[dict] = expansion["join_edges"]          # type: ignore[assignment]
-    bridges: List[str] = expansion["added_bridges"]           # type: ignore[assignment]
-
     catalog = schema_catalog.load_catalog()
+    if selected_tables is not None:
+        expanded_tables = [
+            t
+            for t in dict.fromkeys(selected_tables)
+            if t in catalog.get("tables", {}) and (not joined_only or t.startswith("jt_"))
+        ]
+        if not expanded_tables:
+            raise ValueError("No valid selected joined tables were provided.")
+        seed_tables = expanded_tables
+        table_scores = {t: 1.0 for t in expanded_tables}
+        hits = []
+        bridges = []
+        join_edges = _allowed_joins(catalog, expanded_tables)
+    else:
+        store = store or _load_store()
+        embedder = get_embedder()
+
+        retrieval_text = question
+        if history_context:
+            retrieval_text = f"Lịch sử hội thoại liên quan:\n{history_context}\n\nCâu hỏi hiện tại:\n{question}"
+        qvec = embedder.encode([retrieval_text])[0]
+        hits = store.search(qvec, k=top_k_chunks)
+
+        table_scores = _aggregate_to_tables(hits)
+        if joined_only:
+            table_scores = {t: s for t, s in table_scores.items() if t.startswith("jt_")}
+        seed_tables = sorted(table_scores, key=lambda t: table_scores[t], reverse=True)[:max_seed_tables]
+
+        if joined_only:
+            expanded_tables = seed_tables
+            bridges = []
+            join_edges = _allowed_joins(catalog, expanded_tables)
+        else:
+            expansion = fk_graph.expand(seed_tables, max_tables=max_expand_tables)
+            expanded_tables = expansion["tables"]          # type: ignore[assignment]
+            join_edges = expansion["join_edges"]          # type: ignore[assignment]
+            bridges = expansion["added_bridges"]           # type: ignore[assignment]
+
     pack = build_schema_pack(expanded_tables, join_edges)
     skill_context = skill_cards.read_skill_cards(expanded_tables)
     schema_context = _schema_context_from_catalog(catalog, expanded_tables)

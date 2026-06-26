@@ -59,7 +59,7 @@ data/table_skills/*.skill.md   one compact table card per table
 data/schema_index/*            local vector index
 data/query_logs/*.json         request traces
 data/llm_io_logs/*.json        prompts and raw model responses
-data/runtime_logs/*.log        llama.cpp and web server logs
+data/runtime_logs/*.log        web server logs
 ```
 
 ## Setup
@@ -78,9 +78,10 @@ Git Bash / WSL / Linux / macOS:
 bash setup.sh
 ```
 
-`setup.sh` builds/downloads everything needed for the full pipeline, configures
-`PIPELINE_LLM_BACKEND=llamacpp`, starts llama.cpp router mode, starts the chat UI,
-and writes runtime plus per-request LLM I/O logs.
+`setup.sh` installs Python dependencies, keeps the Granite embedding model local/GPU-capable,
+builds the SQLite database and local vector index, configures `PIPELINE_LLM_BACKEND=remote`,
+and points the planner/SQL stages at the remote chat-completions APIs. It does not build
+llama.cpp and it does not download local Gemma or Qwen model files.
 
 Then open:
 
@@ -102,26 +103,20 @@ Run CLI examples:
 python -m schema_rag.cli demo
 ```
 
-Ask one question:
+Ask one question through the remote Gemma planner and remote Qwen SQL writer:
 
 ```bash
-python -m schema_rag.cli ask "Which distributors have customers with falling order frequency?"
+python -m schema_rag.cli ask "Which distributors have customers with falling order frequency?" --backend remote
 ```
 
-Run with llama.cpp router mode and two GGUF models:
-
-```bash
-llama-server --models-preset ./models/models.ini --models-max 1 --sleep-idle-seconds 300
-# set PIPELINE_LLM_BACKEND=llamacpp in .env
-python -m schema_rag.cli ask "Which customer type generated the highest sales in HCM in 2025?" --backend llamacpp
-```
-
-`setup.sh` downloads and registers:
+Remote model endpoints used by default:
 
 ```text
-planner: unsloth/gemma-4-E4B-it-GGUF:UD-Q4_K_XL -> gemma4-planner
-sql:     unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL   -> qwen3.5-sql
+Gemma planner: http://192.168.0.5:30185/v1/chat/completions
+Qwen SQL:      http://192.168.0.5:30186/v1/chat/completions
 ```
+
+No local Gemma/Qwen GGUF files are downloaded. No llama.cpp router is built or started by setup.
 
 Start chat UI:
 
@@ -146,17 +141,17 @@ EMBEDDER=auto
 EMBED_MODEL=ibm-granite/granite-embedding-311m-multilingual-r2
 ROW_SAMPLE_LIMIT=10
 SKILL_SAMPLE_LIMIT=3
-PIPELINE_LLM_BACKEND=none
-LLAMACPP_BASE_URL=http://localhost:8888
+PIPELINE_LLM_BACKEND=remote
+GEMMA_PLANNER_API_URL=http://192.168.0.5:30185/v1/chat/completions
+QWEN_SQL_API_URL=http://192.168.0.5:30186/v1/chat/completions
 GEMMA_PLANNER_MODEL=gemma4-planner
-QWEN_SQL_MODEL=qwen3.5-sql
-GEMMA_PLANNER_HF_ID=unsloth/gemma-4-E4B-it-GGUF:UD-Q4_K_XL
-QWEN_SQL_HF_ID=unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL
+QWEN_SQL_MODEL=qwen-sql
+EMBED_DEVICE=auto
 ```
 
-`EMBEDDER=auto` tries the real Granite embedding model and falls back to a deterministic
-hash embedder only if the local environment cannot load the model. For best retrieval,
-build the index and run the app with the same embedder setting.
+`EMBEDDER=auto` tries the real local Granite embedding model and falls back to a deterministic
+hash embedder only if the local environment cannot load the model. `EMBED_DEVICE=auto` uses CUDA
+when torch can see a GPU; setup writes `EMBED_DEVICE=cuda` when `nvidia-smi` is visible.
 
 `ROW_SAMPLE_LIMIT` caps how many example rows are embedded from each table during
 indexing. `SKILL_SAMPLE_LIMIT` caps rows written into each generated `skill.md` card.

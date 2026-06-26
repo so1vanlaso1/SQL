@@ -4,12 +4,10 @@
 
 # generated artifacts (rebuilt by `python -m schema_rag.cli setup`)
 data/
-models/
-llama.cpp/
 
 # python caches
 __pycache__/
 *.pyc
 
-# model / HF caches if downloaded locally
+# local embedding/HF caches
 .cache/

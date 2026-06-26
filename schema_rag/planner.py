@@ -24,6 +24,9 @@ Return valid JSON only."""
 PLAN_TEMPLATE = """User question:
 {user_question}
 
+Conversation context:
+{history_context}
+
 Selected table descriptions:
 {skill_md_context}
 
@@ -119,7 +122,7 @@ PLAN_SCHEMA = {
 
 def _plan_response_format(backend: str) -> Optional[dict]:
     """Constrain the planner output to PLAN_SCHEMA on backends that support it."""
-    if backend in {"llamacpp", "openai"}:
+    if backend in {"llamacpp", "openai", "remote", "api", "remote_api"}:
         return {
             "type": "json_schema",
             "json_schema": {"name": "sql_plan", "schema": PLAN_SCHEMA},
@@ -135,6 +138,7 @@ class PlannerResult:
     plan: Optional[dict]
     raw: Optional[str] = None
     note: str = ""
+    llm_call: Optional[dict] = None
 
 
 def build_planner_prompt(
@@ -142,9 +146,11 @@ def build_planner_prompt(
     skill_md_context: str,
     schema_context: str,
     allowed_join_graph: list[dict],
+    history_context: str = "",
 ) -> str:
     return PLAN_TEMPLATE.format(
         user_question=user_question,
+        history_context=history_context or "(không có lịch sử liên quan)",
         skill_md_context=skill_md_context,
         schema_context=schema_context,
         allowed_join_graph=json.dumps(allowed_join_graph, ensure_ascii=False, indent=2),
@@ -172,10 +178,11 @@ def create_plan(
     schema_context: str,
     allowed_join_graph: list[dict],
     backend: str | None = None,
+    history_context: str = "",
 ) -> PlannerResult:
     backend = (backend or config.PIPELINE_LLM_BACKEND).lower()
     model = config.GEMMA_PLANNER_MODEL
-    prompt = build_planner_prompt(user_question, skill_md_context, schema_context, allowed_join_graph)
+    prompt = build_planner_prompt(user_question, skill_md_context, schema_context, allowed_join_graph, history_context)
     if backend == "none":
         return PlannerResult(backend, model, prompt, None, note="PIPELINE_LLM_BACKEND=none - planner prompt built, no model called.")
 
@@ -194,9 +201,9 @@ def create_plan(
         )
         raw = chat.content
         plan = _extract_json(raw)
-        return PlannerResult(backend, model, prompt, plan, raw=raw)
+        return PlannerResult(backend, model, prompt, plan, raw=raw, llm_call=router.last_call)
     except Exception as exc:  # noqa: BLE001
-        return PlannerResult(backend, model, prompt, None, raw=raw, note=f"planner failed: {exc.__class__.__name__}: {exc}")
+        return PlannerResult(backend, model, prompt, None, raw=raw, note=f"planner failed: {exc.__class__.__name__}: {exc}", llm_call=router.last_call)
     finally:
         try:
             router.unload(model)
@@ -212,8 +219,9 @@ def repair_plan(
     schema_context: str,
     allowed_join_graph: list[dict],
     backend: str | None = None,
+    history_context: str = "",
 ) -> PlannerResult:
-    prompt = build_planner_prompt(user_question, skill_md_context, schema_context, allowed_join_graph)
+    prompt = build_planner_prompt(user_question, skill_md_context, schema_context, allowed_join_graph, history_context)
     repair = (
         "Your previous plan was invalid.\n\n"
         f"Previous plan:\n{json.dumps(previous_plan, ensure_ascii=False, indent=2)}\n\n"
@@ -239,9 +247,9 @@ def repair_plan(
             response_format=response_format,
         )
         raw = chat.content
-        return PlannerResult(backend, config.GEMMA_PLANNER_MODEL, repair, _extract_json(raw), raw=raw)
+        return PlannerResult(backend, config.GEMMA_PLANNER_MODEL, repair, _extract_json(raw), raw=raw, llm_call=router.last_call)
     except Exception as exc:  # noqa: BLE001
-        return PlannerResult(backend, config.GEMMA_PLANNER_MODEL, repair, None, raw=raw, note=f"planner repair failed: {exc.__class__.__name__}: {exc}")
+        return PlannerResult(backend, config.GEMMA_PLANNER_MODEL, repair, None, raw=raw, note=f"planner repair failed: {exc.__class__.__name__}: {exc}", llm_call=router.last_call)
     finally:
         try:
             router.unload(config.GEMMA_PLANNER_MODEL)

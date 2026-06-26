@@ -64,13 +64,13 @@ def run_query(sql: str, db_path: Path | None = None, limit: int | None = None, t
 
 def _answer(question: str, columns: Optional[List[str]], rows: Optional[List[tuple]], sql: Optional[str], error: str) -> str:
     if error:
-        return f"I could not execute the query: {error}"
+        return f"Tôi không thể chạy truy vấn: {error}"
     if not rows:
-        return "The query returned no rows."
+        return "Truy vấn không trả về dòng nào."
     if len(rows) == 1 and columns:
         values = ", ".join(f"{col}={val}" for col, val in zip(columns, rows[0]))
-        return f"Result for '{question}': {values}"
-    return f"Returned {len(rows)} row(s) for '{question}'."
+        return f"Kết quả cho '{question}': {values}"
+    return f"Trả về {len(rows)} dòng cho '{question}'."
 
 
 def _log_result(result: PipelineResult) -> None:
@@ -110,6 +110,7 @@ def _log_result(result: PipelineResult) -> None:
 def _validate_and_repair_plan(
     result: PipelineResult,
     backend: str,
+    history_context: str = "",
 ) -> None:
     if result.plan is None:
         return
@@ -126,6 +127,7 @@ def _validate_and_repair_plan(
             schema_context=result.retrieval.schema_context,
             allowed_join_graph=result.retrieval.allowed_join_graph,
             backend=backend,
+            history_context=history_context,
         )
         if repaired.note:
             result.gen_note = (result.gen_note + " | " + repaired.note).strip(" |")
@@ -135,6 +137,7 @@ def _validate_and_repair_plan(
                 "backend": repaired.backend,
                 "model": repaired.model,
                 "prompt": repaired.prompt,
+                "llm_call": repaired.llm_call,
                 "raw_response": repaired.raw,
                 "note": repaired.note,
             }
@@ -169,6 +172,7 @@ def _validate_and_repair_sql(result: PipelineResult, backend: str) -> None:
                 "backend": repaired.backend,
                 "model": repaired.model,
                 "prompt": repaired.prompt,
+                "llm_call": repaired.llm_call,
                 "raw_response": repaired.raw,
                 "sql": repaired.sql,
                 "note": repaired.note,
@@ -187,10 +191,12 @@ def ask(
     backend: Optional[str] = None,
     execute: bool = True,
     gold_sql: Optional[str] = None,
+    selected_tables: Optional[List[str]] = None,
+    history_context: str = "",
 ) -> PipelineResult:
     """Run the full RAG-assisted text-to-SQL pipeline for one question."""
     request_id = f"req_{uuid.uuid4().hex[:12]}"
-    r = retriever.retrieve(question)
+    r = retriever.retrieve(question, history_context=history_context, selected_tables=selected_tables)
     result = PipelineResult(retrieval=r, request_id=request_id)
     backend = (backend or config.PIPELINE_LLM_BACKEND).lower()
     result.backend = backend
@@ -201,6 +207,7 @@ def ask(
         schema_context=r.schema_context,
         allowed_join_graph=r.allowed_join_graph,
         backend=backend,
+        history_context=history_context,
     )
     result.planner_prompt = plan_result.prompt
     result.planner_raw = plan_result.raw or ""
@@ -211,6 +218,7 @@ def ask(
             "backend": plan_result.backend,
             "model": plan_result.model,
             "prompt": plan_result.prompt,
+            "llm_call": plan_result.llm_call,
             "raw_response": plan_result.raw,
             "plan": plan_result.plan,
             "note": plan_result.note,
@@ -219,7 +227,7 @@ def ask(
     if plan_result.note:
         result.gen_note = plan_result.note
 
-    _validate_and_repair_plan(result, backend)
+    _validate_and_repair_plan(result, backend, history_context)
 
     if result.plan and result.plan_validation and result.plan_validation.valid:
         sql_result = sql_writer.write_sql(
@@ -237,6 +245,7 @@ def ask(
                 "backend": sql_result.backend,
                 "model": sql_result.model,
                 "prompt": sql_result.prompt,
+                "llm_call": sql_result.llm_call,
                 "raw_response": sql_result.raw,
                 "sql": sql_result.sql,
                 "note": sql_result.note,
@@ -265,13 +274,13 @@ def ask(
         result.columns, result.rows, result.run_error = cols, rows, err
         result.answer = _answer(question, cols, rows, sql_to_use, err)
     elif result.validation and not result.validation.ok:
-        result.run_error = "SQL validation failed; query was not executed."
+        result.run_error = "SQL không vượt qua kiểm tra an toàn; truy vấn chưa được chạy."
         result.answer = result.run_error
     elif result.plan_validation and not result.plan_validation.valid:
-        result.run_error = "Plan validation failed; SQL was not generated."
+        result.run_error = "Kế hoạch SQL không hợp lệ; chưa tạo SQL."
         result.answer = result.run_error
     else:
-        result.answer = "No executable SQL was produced."
+        result.answer = "Chưa tạo được SQL có thể chạy."
 
     _log_result(result)
     return result

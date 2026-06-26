@@ -45,6 +45,7 @@ class SqlWriterResult:
     sql: Optional[str]
     raw: Optional[str] = None
     note: str = ""
+    llm_call: Optional[dict] = None
 
 
 def _extract_sql(text: str) -> str:
@@ -91,9 +92,9 @@ def write_sql(
             chat_template_kwargs={"enable_thinking": False},
         )
         raw = chat.content
-        return SqlWriterResult(backend, model, prompt, _extract_sql(raw), raw=raw)
+        return SqlWriterResult(backend, model, prompt, _extract_sql(raw), raw=raw, llm_call=router.last_call)
     except Exception as exc:  # noqa: BLE001
-        return SqlWriterResult(backend, model, prompt, None, raw=raw, note=f"sql writer failed: {exc.__class__.__name__}: {exc}")
+        return SqlWriterResult(backend, model, prompt, None, raw=raw, note=f"sql writer failed: {exc.__class__.__name__}: {exc}", llm_call=router.last_call)
     finally:
         try:
             router.unload(model)
@@ -134,9 +135,9 @@ def repair_sql(
             chat_template_kwargs={"enable_thinking": False},
         )
         raw = chat.content
-        return SqlWriterResult(backend, model, prompt, _extract_sql(raw), raw=raw)
+        return SqlWriterResult(backend, model, prompt, _extract_sql(raw), raw=raw, llm_call=router.last_call)
     except Exception as exc:  # noqa: BLE001
-        return SqlWriterResult(backend, model, prompt, None, raw=raw, note=f"sql repair failed: {exc.__class__.__name__}: {exc}")
+        return SqlWriterResult(backend, model, prompt, None, raw=raw, note=f"sql repair failed: {exc.__class__.__name__}: {exc}", llm_call=router.last_call)
     finally:
         try:
             router.unload(model)

@@ -12,7 +12,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from . import build_db, config, index_schema, webapp
+from . import build_db, chat_memory, config, index_schema, webapp
 from .pipeline import PipelineResult, ask
 
 
@@ -200,12 +200,13 @@ def cmd_build_db(args) -> None:
 
 
 def cmd_index(args) -> None:
-    index_schema.build_index()
+    index_schema.build_index(use_gemma_for_joined=args.gemma_skills)
 
 
 def cmd_setup(args) -> None:
     build_db.build()
-    index_schema.build_index()
+    chat_memory.init()
+    index_schema.build_index(use_gemma_for_joined=True)
     print("\nReady. Try:  python -m schema_rag.cli web")
 
 
@@ -225,6 +226,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sp.set_defaults(func=cmd_build_db)
 
     sp = sub.add_parser("index", help="embed schema and build the vector index")
+    sp.add_argument("--gemma-skills", action="store_true", help="generate registered jt_ table skills with Gemma4")
     sp.set_defaults(func=cmd_index)
 
     sp = sub.add_parser("setup", help="build-db + index")
@@ -240,7 +242,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if name == "ask":
             sp.add_argument("question", help="natural-language question")
             sp.add_argument("--gold", default=None, help="optional reference SQL to validate/run")
-        sp.add_argument("--backend", default=None, choices=["none", "llamacpp", "ollama", "openai"],
+        sp.add_argument("--backend", default=None, choices=["none", "remote", "api", "llamacpp", "ollama", "openai"],
                         help="pipeline LLM backend (default from env PIPELINE_LLM_BACKEND, else 'none')")
         sp.add_argument("--no-execute", action="store_true", help="do not run the SQL, just validate")
         sp.add_argument("--show-chunks", action="store_true", help="show raw vector chunk hits")

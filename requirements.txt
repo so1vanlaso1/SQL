@@ -17,7 +17,5 @@ huggingface_hub>=0.23.0
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128
 sentence-transformers>=3.0.0
 
-# ---- optional: run a local SQL LLM via HuggingFace transformers ----
-# (not needed for the RAG retrieval itself; uncomment to use --backend transformers)
-# transformers>=4.44
-# accelerate>=0.30
+# The Gemma planner and Qwen SQL writer are called through remote chat-completions APIs.
+# No local Gemma/Qwen model packages are installed by setup.

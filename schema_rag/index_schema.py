@@ -42,6 +42,9 @@ def _row_chunk_text(table: dict, row: dict) -> str:
 def build_chunks(
     db_path: Path | None = None,
     row_sample_limit: int | None = None,
+    chat_only_joined: bool = True,
+    use_gemma_for_joined: bool = False,
+    generate_skills: bool = True,
 ) -> Tuple[List[str], List[str], List[dict]]:
     ids: List[str] = []
     docs: List[str] = []
@@ -53,9 +56,16 @@ def build_chunks(
         sample_limit=max(limit, config.SKILL_SAMPLE_LIMIT),
     )
     schema_catalog.save_catalog(catalog)
-    skill_cards.build_skill_cards(catalog)
+    if generate_skills:
+        skill_cards.build_skill_cards(catalog, use_gemma_for_joined=use_gemma_for_joined)
 
-    for table_name, table in catalog["tables"].items():
+    index_tables = [
+        (table_name, table)
+        for table_name, table in catalog["tables"].items()
+        if not chat_only_joined or table_name.startswith("jt_")
+    ]
+
+    for table_name, table in index_tables:
         ids.append(f"table::{table_name}")
         docs.append(skill_cards.embedding_text(catalog, table_name))
         metas.append({"kind": "table", "table": table_name})
@@ -73,14 +83,14 @@ def build_chunks(
     return ids, docs, metas
 
 
-def build_index() -> VectorStore:
+def build_index(use_gemma_for_joined: bool = False, generate_skills: bool = True) -> VectorStore:
     embedder = get_embedder()
-    ids, docs, metas = build_chunks()
+    ids, docs, metas = build_chunks(use_gemma_for_joined=use_gemma_for_joined, generate_skills=generate_skills)
     row_chunks = sum(1 for m in metas if m["kind"] == "row")
     table_chunks = sum(1 for m in metas if m["kind"] == "table")
     print(
         f"[index] embedding {len(docs)} chunks "
-        f"({table_chunks} table skill cards + columns + {row_chunks} row samples, "
+        f"({table_chunks} joined table skill cards + columns + {row_chunks} row samples, "
         f"max {config.ROW_SAMPLE_LIMIT}/table) ..."
     )
     vectors = embedder.encode(docs)

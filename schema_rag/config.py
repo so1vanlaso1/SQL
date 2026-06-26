@@ -61,18 +61,35 @@ PLANNER_REPAIR_ATTEMPTS = int(os.environ.get("PLANNER_REPAIR_ATTEMPTS", "1"))
 SQL_REPAIR_ATTEMPTS = int(os.environ.get("SQL_REPAIR_ATTEMPTS", "1"))
 
 # ---- LLMs (optional - the RAG retrieval works without them) ------------------
-# Full pipeline backend options: "none", "llamacpp", "openai", "ollama".
-# llama.cpp router mode is OpenAI-compatible for chat, with model lifecycle at
-# /models/load and /models/unload.
+# Full pipeline backend options:
+#   none    -> retrieval only, build prompts but do not call an LLM
+#   remote  -> call the per-stage OpenAI-compatible chat-completions endpoints below
+#   openai  -> call one generic OpenAI-compatible base URL for both stages
+#   ollama  -> legacy local Ollama path
+#   llamacpp -> legacy local llama.cpp router path (kept for compatibility; setup no longer installs it)
 PIPELINE_LLM_BACKEND = os.environ.get("PIPELINE_LLM_BACKEND", os.environ.get("SQL_LLM_BACKEND", "none")).lower()
 
+# Remote OpenAI-compatible chat-completions endpoints. These are full endpoint URLs,
+# not base URLs. The Gemma planner and Qwen SQL writer intentionally call different
+# servers.
+GEMMA_PLANNER_API_URL = os.environ.get("GEMMA_PLANNER_API_URL", "http://192.168.0.5:30185/v1/chat/completions")
+QWEN_SQL_API_URL = os.environ.get("QWEN_SQL_API_URL", "http://192.168.0.5:30186/v1/chat/completions")
+GEMMA_SKILL_API_URL = os.environ.get("GEMMA_SKILL_API_URL", GEMMA_PLANNER_API_URL)
+REMOTE_LLM_API_KEY = os.environ.get("REMOTE_LLM_API_KEY", "")
+REMOTE_LLM_TIMEOUT_SECONDS = int(os.environ.get("REMOTE_LLM_TIMEOUT_SECONDS", "600"))
+
+# Model names sent in the request payload. For single-model servers these can be
+# simple aliases; the route is selected by GEMMA_PLANNER_API_URL/QWEN_SQL_API_URL.
+GEMMA_PLANNER_MODEL = os.environ.get("GEMMA_PLANNER_MODEL", "gemma4-planner")
+QWEN_SQL_MODEL = os.environ.get("QWEN_SQL_MODEL", "qwen-sql")
+GEMMA_SKILL_MODEL = os.environ.get("GEMMA_SKILL_MODEL", GEMMA_PLANNER_MODEL)
+ALLOW_TEMPLATE_SKILL_FALLBACK = os.environ.get("ALLOW_TEMPLATE_SKILL_FALLBACK", "0").lower() in {"1", "true", "yes"}
+CHAT_HISTORY_TURNS = int(os.environ.get("CHAT_HISTORY_TURNS", "6"))
+
+# Legacy llama.cpp router settings. They are no longer used by setup.sh/setup.ps1.
 LLAMACPP_BASE_URL = os.environ.get("LLAMACPP_BASE_URL", "http://localhost:8888")
 LLAMACPP_API_KEY = os.environ.get("LLAMACPP_API_KEY", "")
-GEMMA_PLANNER_MODEL = os.environ.get("GEMMA_PLANNER_MODEL", "gemma4-planner")
-QWEN_SQL_MODEL = os.environ.get("QWEN_SQL_MODEL", "qwen3.5-sql")
-GEMMA_PLANNER_HF_ID = os.environ.get("GEMMA_PLANNER_HF_ID", "unsloth/gemma-4-E4B-it-GGUF:UD-Q4_K_XL")
-QWEN_SQL_HF_ID = os.environ.get("QWEN_SQL_HF_ID", "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL")
-LLAMA_MANUAL_LOAD = os.environ.get("LLAMA_MANUAL_LOAD", "1").lower() not in {"0", "false", "no"}
+LLAMA_MANUAL_LOAD = os.environ.get("LLAMA_MANUAL_LOAD", "0").lower() not in {"0", "false", "no"}
 LLAMA_MANUAL_UNLOAD = os.environ.get("LLAMA_MANUAL_UNLOAD", "0").lower() not in {"0", "false", "no"}
 
 # Legacy direct SQL generation backend. Kept for CLI compatibility.
