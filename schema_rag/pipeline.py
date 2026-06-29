@@ -259,16 +259,28 @@ def ask(
     """Run the full RAG-assisted text-to-SQL pipeline for one question."""
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     backend = (backend or config.PIPELINE_LLM_BACKEND).lower()
+    joined_only = config.RETRIEVE_JOINED_ONLY
     rewrite_result = None
     rewrite_target_tables: list[str] = []
     if selected_tables is None:
-        rewrite_result = query_rewriter.rewrite_for_embedding(question, backend=backend, joined_only=True)
+        rewrite_result = query_rewriter.rewrite_for_embedding(question, backend=backend, joined_only=joined_only)
         rewrite_target_tables = rewrite_result.target_tables
+    if joined_only:
+        # Legacy: a confident rewriter table guess short-circuits vector retrieval.
+        retrieve_selected = selected_tables or rewrite_target_tables or None
+        boost_tables = None
+    else:
+        # Hybrid: always run alias + BM25 + vector retrieval; the rewriter's guess
+        # becomes a soft boost rather than a hard table selection.
+        retrieve_selected = selected_tables
+        boost_tables = rewrite_target_tables or None
     r = retriever.retrieve(
         question,
         history_context=history_context,
         embedding_query=rewrite_result.embedding_query if rewrite_result else None,
-        selected_tables=selected_tables or rewrite_target_tables or None,
+        selected_tables=retrieve_selected,
+        joined_only=joined_only,
+        boost_tables=boost_tables,
     )
     result = PipelineResult(retrieval=r, request_id=request_id)
     result.backend = backend
@@ -298,7 +310,7 @@ def ask(
             question,
             candidate_tables=r.expanded_tables,
             preferred_columns=[],
-            joined_only=True,
+            joined_only=joined_only,
         )
     result.entity_matches = entity_matches or []
     if result.entity_matches:

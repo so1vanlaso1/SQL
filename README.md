@@ -40,28 +40,41 @@ delivery orders, and returns.
 ```text
 user question
 -> Gemma rewrites an embedding query using only table names + column names
--> embed rewritten query with ibm-granite/granite-embedding-311m-multilingual-r2
--> vector search table skill cards, column chunks, and capped row samples
--> aggregate hits into seed tables
--> expand selected tables through the FK graph
+-> normalize Vietnamese có dấu -> không dấu (shared schema_rag/vn_text.py)
+-> hybrid retrieval over base + jt_ tables:
+     * exact alias / synonym match (schema_rag/alias_map.py)
+     * BM25 lexical search over normalized docs (schema_rag/bm25_index.py)
+     * vector search with ibm-granite/granite-embedding-311m-multilingual-r2
+-> fuse the signals with Reciprocal Rank Fusion + alias/column boosts (schema_rag/rrf.py)
+-> take the top seed tables, expand through the FK graph into a mini-schema
+-> fuzzy-resolve literal entity values against real DB values (rapidfuzz)
 -> pack selected skill.md files, real schema JSON, and allowed joins
 -> Gemma planner creates structured JSON plan
 -> code validates plan against real tables, columns, and join graph
 -> Qwen SQL writer converts validated plan to SQL
--> code validates SQL, runs EXPLAIN, executes with timeout and row cap
+-> code validates SQL (parse, allowed tables/columns, no-dấu identifiers, EXPLAIN),
+   executes with timeout and row cap
 -> return answer, rows, optional SQL, and request log
 ```
+
+Retrieval mode is controlled by `RETRIEVE_JOINED_ONLY` (default `0`). The default ranks
+over base + `jt_` tables and FK-expands into a minimal schema; set it to `1` to fall back
+to the legacy vector-only path over the pre-joined `jt_` wide tables. Two models are used:
+the **Gemma planner** and the **Qwen coder SQL writer**, each on its own endpoint.
 
 Generated offline artifacts:
 
 ```text
-data/schema_catalog.json       extracted live database schema/catalog
-data/table_skills/*.skill.md   one compact table card per table
-data/schema_index/*            local vector index
-data/query_logs/*.json         request traces
-data/llm_io_logs/*.json        prompts and raw model responses
-data/llm_io_logs/llm_calls.txt readable append-only LLM call log
-data/runtime_logs/*.log        web server logs
+data/schema_catalog.json          extracted live database schema/catalog
+data/table_skills/*.skill.md      one compact table card per table
+data/schema_index/*               local vector index (vectors.npy + meta.json)
+data/schema_index/alias_map.json  normalized alias/synonym -> identifier map
+data/schema_index/bm25_index.pkl  BM25 lexical index over normalized docs
+data/evals/questions_vi.jsonl     Vietnamese eval questions + expected tables
+data/query_logs/*.json            request traces
+data/llm_io_logs/*.json           prompts and raw model responses
+data/llm_io_logs/llm_calls.txt    readable append-only LLM call log
+data/runtime_logs/*.log           web server logs
 ```
 
 ## Setup
@@ -120,6 +133,13 @@ Qwen SQL:      http://192.168.0.5:30186/v1/chat/completions
 
 No local Gemma/Qwen GGUF files are downloaded. No llama.cpp router is built or started by setup.
 
+Run the Vietnamese eval set (table recall + SQL validity + execution success):
+
+```bash
+python -m schema_rag.cli eval --backend remote
+python -m schema_rag.cli eval --no-execute            # validate only, no DB run
+```
+
 Start chat UI:
 
 ```bash
@@ -149,7 +169,19 @@ QWEN_SQL_API_URL=http://192.168.0.5:30186/v1/chat/completions
 GEMMA_PLANNER_MODEL=gemma4-planner
 QWEN_SQL_MODEL=qwen-sql
 EMBED_DEVICE=auto
+RETRIEVE_JOINED_ONLY=0
+ENABLE_BM25=1
+ENABLE_ALIAS_MATCH=1
+RRF_K=60
+BM25_TOP_K=15
+ALIAS_MATCH_BOOST=0.20
+COLUMN_MATCH_BOOST=0.10
 ```
+
+`RETRIEVE_JOINED_ONLY=0` enables hybrid retrieval over base + `jt_` tables (alias + BM25 +
+vector fused by RRF, then FK-graph mini-schema). `ENABLE_BM25` / `ENABLE_ALIAS_MATCH` toggle
+the lexical and exact-alias signals; if `rank-bm25` is not installed or the artifacts are
+missing, retrieval transparently falls back to vector-only.
 
 `EMBEDDER=auto` tries the real local Granite embedding model and falls back to a deterministic
 hash embedder only if the local environment cannot load the model. `EMBED_DEVICE=auto` uses CUDA

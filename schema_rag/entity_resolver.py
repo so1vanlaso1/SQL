@@ -9,10 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 import sqlite3
-import unicodedata
 from typing import Any, Iterable
 
 from . import config, schema_catalog
+from .vn_text import normalize_vietnamese_text
 
 try:  # rapidfuzz is preferred, but the app should still import without it.
     from rapidfuzz import fuzz
@@ -72,13 +72,9 @@ _STOPWORDS = {
 }
 
 
-def normalize_text(value: object) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = text.lower()
-    text = text.replace("đ", "d")
-    text = re.sub(r"[^a-z0-9_]+", " ", text)
-    return " ".join(text.split())
+# Backwards-compatible alias. The implementation now lives in vn_text so retrieval,
+# BM25, alias matching, and entity resolution all share one normalizer.
+normalize_text = normalize_vietnamese_text
 
 
 def _quote_ident(name: str) -> str:

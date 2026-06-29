@@ -29,6 +29,10 @@ DB_PATH = Path(os.environ.get("DB_PATH", DATA_DIR / "sales.db"))
 INDEX_DIR = Path(os.environ.get("INDEX_DIR", DATA_DIR / "schema_index"))
 SKILL_DIR = Path(os.environ.get("SKILL_DIR", DATA_DIR / "table_skills"))
 CATALOG_PATH = Path(os.environ.get("CATALOG_PATH", DATA_DIR / "schema_catalog.json"))
+# Hybrid-retrieval artifacts (built alongside the vector index).
+ALIAS_MAP_PATH = Path(os.environ.get("ALIAS_MAP_PATH", INDEX_DIR / "alias_map.json"))
+BM25_INDEX_PATH = Path(os.environ.get("BM25_INDEX_PATH", INDEX_DIR / "bm25_index.pkl"))
+EVAL_PATH = Path(os.environ.get("EVAL_PATH", DATA_DIR / "evals" / "questions_vi.jsonl"))
 LOG_DIR = Path(os.environ.get("LOG_DIR", DATA_DIR / "query_logs"))
 LLM_IO_LOG_DIR = Path(os.environ.get("LLM_IO_LOG_DIR", DATA_DIR / "llm_io_logs"))
 LLM_IO_TEXT_LOG_PATH = Path(os.environ.get("LLM_IO_TEXT_LOG_PATH", LLM_IO_LOG_DIR / "llm_calls.txt"))
@@ -52,14 +56,29 @@ MAX_EXPAND_TABLES = int(os.environ.get("MAX_EXPAND_TABLES", "12"))  # safety cap
 ROW_SAMPLE_LIMIT = int(os.environ.get("ROW_SAMPLE_LIMIT", "10"))  # row examples embedded per table
 SKILL_SAMPLE_LIMIT = int(os.environ.get("SKILL_SAMPLE_LIMIT", "3"))  # rows shown in each skill.md
 
+# ---- Hybrid retrieval (Vietnamese không-dấu) --------------------------------
+# When RETRIEVE_JOINED_ONLY is false, retrieval ranks over base + jt_ tables with
+# alias + BM25 + vector signals fused by RRF, then FK-expands into a mini-schema.
+# When true, the legacy vector-only jt_-only path is used.
+def _flag(name: str, default: str) -> bool:
+    return os.environ.get(name, default).lower() in {"1", "true", "yes"}
+
+RETRIEVE_JOINED_ONLY = _flag("RETRIEVE_JOINED_ONLY", "0")
+ENABLE_BM25 = _flag("ENABLE_BM25", "1")
+ENABLE_ALIAS_MATCH = _flag("ENABLE_ALIAS_MATCH", "1")
+RRF_K = int(os.environ.get("RRF_K", "60"))            # RRF damping constant
+BM25_TOP_K = int(os.environ.get("BM25_TOP_K", "15"))  # raw BM25 doc hits to pull
+ALIAS_MATCH_BOOST = float(os.environ.get("ALIAS_MATCH_BOOST", "0.20"))   # per matched-phrase token, for table aliases
+COLUMN_MATCH_BOOST = float(os.environ.get("COLUMN_MATCH_BOOST", "0.10")) # per matched-phrase token, for column aliases
+
 # ---- Pipeline safety knobs --------------------------------------------------
 SQL_DIALECT = os.environ.get("SQL_DIALECT", "sqlite").lower()
 QUERY_TIMEOUT_SECONDS = int(os.environ.get("QUERY_TIMEOUT_SECONDS", "30"))
 MAX_RESULT_ROWS = int(os.environ.get("MAX_RESULT_ROWS", "500"))
 RAW_SELECT_LIMIT = int(os.environ.get("RAW_SELECT_LIMIT", "100"))
 EXPLAIN_MAX_SCAN_ROWS = int(os.environ.get("EXPLAIN_MAX_SCAN_ROWS", "100000"))
-PLANNER_REPAIR_ATTEMPTS = int(os.environ.get("PLANNER_REPAIR_ATTEMPTS", "1"))
-SQL_REPAIR_ATTEMPTS = int(os.environ.get("SQL_REPAIR_ATTEMPTS", "1"))
+PLANNER_REPAIR_ATTEMPTS = int(os.environ.get("PLANNER_REPAIR_ATTEMPTS", "2"))
+SQL_REPAIR_ATTEMPTS = int(os.environ.get("SQL_REPAIR_ATTEMPTS", "2"))
 
 # ---- LLMs (optional - the RAG retrieval works without them) ------------------
 # Full pipeline backend options:

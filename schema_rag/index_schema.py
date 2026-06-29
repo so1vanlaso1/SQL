@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Tuple
 
-from . import config, schema_catalog, skill_cards
+from . import alias_map, bm25_index, config, schema_catalog, skill_cards
 from .embedder import get_embedder
 from .vectorstore import VectorStore
 
@@ -85,12 +85,20 @@ def build_chunks(
 
 def build_index(use_gemma_for_joined: bool = False, generate_skills: bool = True) -> VectorStore:
     embedder = get_embedder()
-    ids, docs, metas = build_chunks(use_gemma_for_joined=use_gemma_for_joined, generate_skills=generate_skills)
+    # Hybrid retrieval ranks over base + jt_ tables, so index all tables unless the
+    # legacy jt_-only mode is configured.
+    chat_only_joined = config.RETRIEVE_JOINED_ONLY
+    ids, docs, metas = build_chunks(
+        use_gemma_for_joined=use_gemma_for_joined,
+        generate_skills=generate_skills,
+        chat_only_joined=chat_only_joined,
+    )
     row_chunks = sum(1 for m in metas if m["kind"] == "row")
     table_chunks = sum(1 for m in metas if m["kind"] == "table")
+    scope = "joined-only" if chat_only_joined else "base + joined"
     print(
         f"[index] embedding {len(docs)} chunks "
-        f"({table_chunks} joined table skill cards + columns + {row_chunks} row samples, "
+        f"({table_chunks} {scope} table skill cards + columns + {row_chunks} row samples, "
         f"max {config.ROW_SAMPLE_LIMIT}/table) ..."
     )
     vectors = embedder.encode(docs)
@@ -100,6 +108,12 @@ def build_index(use_gemma_for_joined: bool = False, generate_skills: bool = True
     print(f"[index] saved {len(ids)} vectors (dim={store.dim}) -> {config.INDEX_DIR}")
     print(f"[index] wrote schema catalog -> {config.CATALOG_PATH}")
     print(f"[index] wrote table skill cards -> {config.SKILL_DIR}")
+
+    # ---- hybrid retrieval artifacts (alias map + BM25 lexical index) ----------
+    catalog = schema_catalog.load_catalog()
+    alias_path = alias_map.build_and_save(catalog)
+    print(f"[index] wrote alias map -> {alias_path}")
+    bm25_index.build_bm25_index(ids, docs, metas)
     return store
 
 

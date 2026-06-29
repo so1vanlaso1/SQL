@@ -9,6 +9,9 @@
 from __future__ import annotations
 
 import argparse
+import json
+import time
+from pathlib import Path
 import sys
 from typing import List, Optional
 
@@ -30,9 +33,20 @@ def _print_retrieval(res: PipelineResult, show_chunks: bool = False) -> None:
         print(f"      {t:<22} score={r.table_scores.get(t, 0):.3f}")
 
     if show_chunks:
-        print("\n    raw chunk hits:")
+        print("\n    raw vector chunk hits:")
         for h in r.chunk_hits[:10]:
             print(f"      {h.score:.3f}  {h.doc_id}")
+        if r.bm25_hits:
+            print("\n    BM25 lexical hits:")
+            for h in r.bm25_hits[:10]:
+                print(f"      {h.score:.3f}  {h.doc_id}")
+        if r.alias_hits:
+            print("\n    exact alias matches:")
+            for h in r.alias_hits[:10]:
+                print(f"      {h.get('phrase')!r} -> {h.get('identifier')} ({h.get('type')})")
+        if r.candidate_columns:
+            print("\n    candidate columns (from alias match):")
+            print(f"      {', '.join(r.candidate_columns)}")
 
     print("\n[2] FK-graph expansion -> tables actually used:")
     print(f"      {', '.join(r.expanded_tables)}")
@@ -218,6 +232,70 @@ def cmd_web(args) -> None:
     webapp.serve(host=args.host, port=args.port)
 
 
+def _load_eval_questions(path: Path) -> List[dict]:
+    items: List[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        items.append(json.loads(line))
+    return items
+
+
+def cmd_eval(args) -> None:
+    """Run the Vietnamese eval set: table recall, SQL validity, execution success."""
+    path = Path(args.file) if args.file else config.EVAL_PATH
+    if not path.exists():
+        print(f"No eval file at {path}. Create it or pass --file.")
+        return
+    questions = _load_eval_questions(path)
+    if not questions:
+        print(f"No questions found in {path}.")
+        return
+
+    recalls: List[float] = []
+    sql_produced = sql_valid = executed = 0
+    total_latency = 0.0
+    print(f"Running {len(questions)} eval question(s) from {path} (backend={args.backend or config.PIPELINE_LLM_BACKEND}) ...\n")
+    for item in questions:
+        question = item["question"]
+        expected = [str(t) for t in item.get("expected_tables", [])]
+        start = time.monotonic()
+        res = ask(question, backend=args.backend, execute=not args.no_execute)
+        latency = time.monotonic() - start
+        total_latency += latency
+
+        retrieved = set(res.retrieval.expanded_tables)
+        hit = [t for t in expected if t in retrieved]
+        recall = (len(hit) / len(expected)) if expected else 0.0
+        recalls.append(recall)
+        if res.sql:
+            sql_produced += 1
+        if res.validation and res.validation.ok:
+            sql_valid += 1
+        if res.rows is not None and not res.run_error:
+            executed += 1
+
+        missing = [t for t in expected if t not in retrieved]
+        print(f"[{item.get('id', '?')}] recall={recall:.2f}  sql={'yes' if res.sql else 'no'}  "
+              f"valid={'yes' if (res.validation and res.validation.ok) else 'no'}  {latency:.2f}s")
+        print(f"     Q: {question}")
+        print(f"     retrieved: {', '.join(res.retrieval.expanded_tables) or '(none)'}")
+        if missing:
+            print(f"     MISSING expected: {', '.join(missing)}")
+
+    n = len(questions)
+    print("\n" + "=" * 60)
+    print(f"questions:                 {n}")
+    print(f"avg table recall:          {sum(recalls) / n:.3f}")
+    print(f"sql produced:              {sql_produced}/{n}")
+    print(f"sql valid (parse+checks):  {sql_valid}/{n}")
+    print(f"executed successfully:     {executed}/{n}")
+    print(f"avg latency:               {total_latency / n:.2f}s")
+    print("Note: recall is measured on exact base-table names; a jt_ wide table that")
+    print("answers the question may legitimately lower this metric.")
+
+
 def cmd_entity_index(args) -> None:
     result = entity_resolver.build_neo4j_index(joined_only=not args.all_tables)
     print(result)
@@ -249,6 +327,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     sp = sub.add_parser("entity-index", help="build the optional Neo4j fuzzy entity index")
     sp.add_argument("--all-tables", action="store_true", help="index all tables instead of only joined chat tables")
     sp.set_defaults(func=cmd_entity_index)
+
+    sp = sub.add_parser("eval", help="run the Vietnamese eval set (table recall + SQL validity)")
+    sp.add_argument("--file", default=None, help=f"path to questions jsonl (default {config.EVAL_PATH})")
+    sp.add_argument("--backend", default=None, choices=["none", "remote", "api", "llamacpp", "ollama", "openai"],
+                    help="pipeline LLM backend (default from env PIPELINE_LLM_BACKEND, else 'none')")
+    sp.add_argument("--no-execute", action="store_true", help="do not run the SQL, just validate")
+    sp.set_defaults(func=cmd_eval)
 
     for name in ("ask", "demo"):
         sp = sub.add_parser(name, help="run the pipeline")

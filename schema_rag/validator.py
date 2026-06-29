@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Set
 
 from . import config, schema_catalog, schema_def
+from .vn_text import has_diacritics
 
 
 @dataclass
@@ -123,6 +124,37 @@ def _static_identifier_check(sql: str, res: ValidationResult) -> None:
         res.errors.append("Unknown columns: " + ", ".join(res.unknown_columns))
 
 
+def _diacritic_identifier_check(sql: str, res: ValidationResult) -> None:
+    """Reject SQL whose table/column identifiers carry Vietnamese dấu.
+
+    The schema is không-dấu snake_case by design, so any diacritic in an identifier
+    is a generation error (e.g. ``khách_hàng`` instead of ``khach_hang``). String
+    literals - which may legitimately contain dấu, e.g. WHERE ten = 'Cửa hàng' - are
+    left untouched because we only inspect parsed Identifier nodes, not literals.
+    """
+    try:
+        import sqlglot
+        from sqlglot import exp
+    except Exception:
+        return  # sqlglot already warned about in _parse_with_sqlglot
+    try:
+        parsed = sqlglot.parse_one(sql, read=config.SQL_DIALECT)
+    except Exception:
+        return  # parse error already reported elsewhere
+    if parsed is None:
+        return
+    bad: list[str] = []
+    for ident in parsed.find_all(exp.Identifier):
+        name = ident.name or ""
+        if has_diacritics(name) and name not in bad:
+            bad.append(name)
+    if bad:
+        res.errors.append(
+            "SQL identifiers must be không dấu snake_case (no Vietnamese diacritics): "
+            + ", ".join(bad)
+        )
+
+
 def _binding_check(sql: str, db_path: Path) -> list[str]:
     if not db_path.exists():
         return []
@@ -197,6 +229,7 @@ def validate(sql: str, db_path: Path | None = None, require_limit_for_raw: bool 
     normalized = _strip_trailing_semicolon(sql)
     _parse_with_sqlglot(normalized, res)
     _static_identifier_check(normalized, res)
+    _diacritic_identifier_check(normalized, res)
 
     if require_limit_for_raw and _looks_like_raw_select(normalized) and not re.search(r"\bLIMIT\s+\d+\b", normalized, re.I):
         res.errors.append(f"Raw row SELECT queries must include LIMIT <= {config.RAW_SELECT_LIMIT}.")

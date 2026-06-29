@@ -97,12 +97,14 @@ def _catalog_table_summary(table: str) -> dict:
 
 def chat_retrieve(session_id: str | None, question: str) -> dict:
     sid = chat_memory.ensure_session(session_id, question)
-    rewrite = query_rewriter.rewrite_for_embedding(question, backend=config.PIPELINE_LLM_BACKEND, joined_only=True)
+    joined_only = config.RETRIEVE_JOINED_ONLY
+    rewrite = query_rewriter.rewrite_for_embedding(question, backend=config.PIPELINE_LLM_BACKEND, joined_only=joined_only)
     r = retriever.retrieve(
         question,
         embedding_query=rewrite.embedding_query,
-        selected_tables=rewrite.target_tables or None,
-        joined_only=True,
+        selected_tables=(rewrite.target_tables or None) if joined_only else None,
+        joined_only=joined_only,
+        boost_tables=None if joined_only else (rewrite.target_tables or None),
     )
     tables = [_catalog_table_summary(t) for t in r.seed_tables]
     return {
@@ -113,6 +115,16 @@ def chat_retrieve(session_id: str | None, question: str) -> dict:
         "rewrite_note": rewrite.note,
         "tables": tables,
         "table_scores": r.table_scores,
+        # Hybrid-retrieval debug view (plan §18 debug mode).
+        "debug": {
+            "expanded_tables": r.expanded_tables,
+            "bridge_tables": r.bridge_tables,
+            "join_edges": r.join_edges,
+            "candidate_columns": r.candidate_columns,
+            "signal_tables": r.signal_tables,
+            "alias_hits": r.alias_hits,
+            "bm25_doc_ids": [h.doc_id for h in r.bm25_hits],
+        },
     }
 
 
@@ -221,7 +233,7 @@ def chat_ask(session_id: str | None, question: str) -> dict:
         question,
         candidate_tables=preferred_tables,
         preferred_columns=preferred_columns,
-        joined_only=True,
+        joined_only=config.RETRIEVE_JOINED_ONLY,
     )
     if matches:
         trace.append({"stage": "fuzzy_entities", "detail": "Resolved fuzzy values from real database values."})

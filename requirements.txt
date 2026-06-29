@@ -21,3 +21,7 @@ sentence-transformers>=3.0.0
 # No local Gemma/Qwen model packages are installed by setup.
 rapidfuzz>=3.9.0
 neo4j>=5.20.0
+
+# Lexical BM25 search for hybrid retrieval (alias + BM25 + vector -> RRF).
+# Pure-Python, tiny; if absent the retriever falls back to vector-only.
+rank-bm25>=0.2.2
